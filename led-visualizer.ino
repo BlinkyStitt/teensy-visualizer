@@ -354,11 +354,11 @@ void loop() {
           // map(value, fromLow, fromHigh, toLow, toHigh)
           // TODO: set color_hue based on subdividing this level
           int color_hue = map(i, 0, numOutputs - 1, 0, 255);
-          // TODO: what should saturation be? maybe not 255. TUNE THIS!
+          // TODO: what should saturation be? maybe not 255
           // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
 
-          // TODO: write localMaxLevel which looks at neighbors and uses their max
-          int color_value = int(currentLevel[i] / getLocalMaxLevel(i) * 255);
+          // look at neighbors and use their max for brightness if they are louder (but don't be less than 25% on!)
+          int color_value = max(64, int(currentLevel[i] / getLocalMaxLevel(i) * 255));
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
