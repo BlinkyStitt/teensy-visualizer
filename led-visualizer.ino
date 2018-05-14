@@ -28,7 +28,7 @@
 #define LED_CLOCK_PIN      1  // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 50
+#define DEFAULT_BRIGHTNESS 200  // TODO: read from SD
 #define FRAMES_PER_SECOND  120
 
 AudioInputI2S             i2s1;           //xy=139,91
@@ -52,7 +52,7 @@ CRGB leds[numOutputs];
 float decayAvg = 0.60;
 // how close a sound has to be to the loudest sound in order to activate
 // TODO: tune this! was .99 with EL, but LED should probably be different
-float activateDifference = 0.99;
+float activateDifference = 0.98;
 // simple % decrease
 float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
@@ -353,12 +353,12 @@ void loop() {
 
           // map(value, fromLow, fromHigh, toLow, toHigh)
           // TODO: set color_hue based on subdividing this level
-          int color_hue = map(i, 0, numOutputs - 1, 0, 255);
+          int color_hue = map(i, 0, numOutputs, 0, 255); // TODO: 255 == 0 so we map to numOutputs and not numOutputs-1
           // TODO: what should saturation be? maybe not 255
           // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
 
-          // look at neighbors and use their max for brightness if they are louder (but don't be less than 25% on!)
-          int color_value = max(64, int(currentLevel[i] / getLocalMaxLevel(i) * 255));
+          // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
+          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i) * 255));
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
