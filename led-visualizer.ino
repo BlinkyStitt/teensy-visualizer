@@ -28,7 +28,7 @@
 #define LED_CLOCK_PIN      1  // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 60  // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 200  // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND  120
 
 AudioInputI2S             i2s1;           //xy=139,91
@@ -40,22 +40,23 @@ AudioControlSGTL5000      audioShield;    //xy=366,225
 
 elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
-const int numOutputs = 8;
+const int numOutputs = 16;
+
+// TODO: CHSV colors[numOutputs * numLevelsPerOutput]
+CRGB leds[numOutputs];
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
 int numOn = 0;
-int maxOn = 7;
+int maxOn = numOutputs * 0.75;
 
-CRGB leds[numOutputs];
-
-// EMA factor  // TODO: tune this. this worked for EL, but now I think we might tie the brightness to it. read from SD card
-float decayAvg = 0.60;
-// how close a sound has to be to the loudest sound in order to activate
-// TODO: tune this! was .99 with EL, but LED should probably be different
-float activateDifference = 0.995;
+// how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
+float activateDifference = 0.98;
 // simple % decrease
 float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
+
+float scale_neighbor_max = 0.616;  // how much of the neighbor's max to consider when deciding when to turn on
+float scale_neighbor_value = 1.1;  // how much of the neighbor's max to consider when deciding how bright to be
 
 // arrays to keep track of the volume for each frequency band
 // TODO: eventually track numOutputs *3 or something like that and then have the color shift to follow the loudest of the 3
@@ -70,7 +71,7 @@ unsigned long turnOffMsArray[numOutputs];
 unsigned long lastUpdate = 0;
 
 // keep the lights from blinking too fast
-uint minOnMs = 200; // 118? 150? 184? 200?  // the shortest amount of time to leave an output on. todo: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
+uint minOnMs = 250; // 118? 150? 184? 200?  // the shortest amount of time to leave an output on. todo: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
 
 /* sort the levels normalized against their max
  *
@@ -98,7 +99,7 @@ void setup() {
   // TODO: read numOutputs from the SD card
 
   // TODO: clock select pin for FastLED to OUTPUT like we do for the SDCARD?
-  FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numOutputs);
+  FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numOutputs).setCorrection( TypicalSMD5050 );;
   FastLED.setBrightness(DEFAULT_BRIGHTNESS);  // TODO: read this from the SD card
   FastLED.clear();
   FastLED.show();
@@ -120,7 +121,8 @@ void setup() {
   audioShield.eqSelect(GRAPHIC_EQUALIZER);
   // audioShield.eqBands(-0.80, -0.75, -0.50, 0.50, 0.80);  // the great northern
   // audioShield.eqBands(-0.5, -.2, 0, .2, .5);  // todo: tune this
-  audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
+  //audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
+  audioShield.eqBands(0.0, 0, 0, 0, 0);  // todo: tune this
 
   audioShield.unmuteHeadphone();  // for debugging
 
@@ -175,6 +177,7 @@ void updateLevelsFromFFT() {
       currentLevel[4]  = fft1024.read(42, 186);  // TODO: tune this
       break;
     case 6:
+    // TODO: tune this. it worked ok for el, but LED
       currentLevel[0]  = fft1024.read(1, 3);   // 110
       currentLevel[1]  = fft1024.read(4, 6);   // 220
       currentLevel[2]  = fft1024.read(7, 10);  // 440
@@ -298,7 +301,7 @@ void loop() {
       }
 
       // turn off if current level is less than the activation threshold
-      if (currentLevel[i] < getLocalMaxLevel(i, 0.66) * activateDifference) {
+      if (currentLevel[i] < getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
         // the output should be off
         if (elapsedMs < turnOffMsArray[i]) {
           // the output has not been on for long enough to prevent flicker
@@ -306,7 +309,7 @@ void loop() {
           // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
           // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
           // using "video" scaling, meaning: never fading to full black
-          leds[i].fadeLightBy(int((1.0 - decayMax) * 6.0 * 255));
+          leds[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
         } else {
           // the output has been on for at least minOnMs and is quiet now
           // if it is on, turn it off
@@ -328,7 +331,7 @@ void loop() {
       int i = sortedLevelIndex[j];
 
       // check if current is close to the last max (also check the neighbor maxLevels)
-      if (currentLevel[i] >= getLocalMaxLevel(i, 0.66) * activateDifference) {
+      if (currentLevel[i] >= getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
         // this light should be on!
         if (numOn >= maxOn) {
           // except we already have too many lights on! don't do anything since this light is already off
@@ -351,7 +354,7 @@ void loop() {
 
           // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
           // TODO: s-curve?
-          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, 1.1) * 255));
+          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_value) * 255));
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
