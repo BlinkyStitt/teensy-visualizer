@@ -40,9 +40,15 @@ AudioControlSGTL5000      audioShield;    //xy=366,225
 
 elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
-const int numOutputs = 19;
+int minBin = 0;    // skip 0-43Hz. it's too noisy
+int maxBin = 419;  // skip over 18kHz
 
-// TODO: CHSV colors[numOutputs * numLevelsPerOutput]
+const int numOutputs = 16;  // TODO: have this be the max and have SD card override
+const int numBands = numOutputs;  // TODO: numOutputs * 2 or 3 and then shift the color for the led
+
+int fftBins[numBands];
+
+// TODO: CHSV colors[numOutputs * numBandsPerOutput]
 CRGB leds[numOutputs];
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
@@ -81,6 +87,63 @@ static int compare_levels(const void *a, const void *b)
 {
   int aa = *((int *) a), bb = *((int *) b);
   return (currentLevel[bb] / maxLevel[bb]) - (currentLevel[aa] / maxLevel[aa]);
+}
+
+void getFFTBins() {
+  // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands?p=133842&viewfull=1#post133842
+  float e, n;
+  int count = minBin, d;
+
+  e = FindE(numBands, minBin, maxBin);   // Find calculated E value
+
+  while (!Serial && (millis() <= 6000));  // Wait for Serial interface
+
+  if (e) {                                // If a value was returned continue
+    Serial.printf("E = %4.4f\n", e);      // Print calculated E value
+    for (int b = 0; b < numBands; b++) {  // Test and print the bins from the calculated E
+      n = pow(e, b);
+      d = int(n + 0.5);
+
+      Serial.printf("%4d ", count);       // Print low bin
+      fftBins[b] = count;
+
+      count += d - 1;
+      Serial.printf("%4d\n", count);      // Print high bin
+
+      count++;
+    }
+  } else {
+    Serial.println("Error\n");            // Error, something happened
+    // TODO: what should we do here?
+  }
+}
+
+float FindE(int bands, int minBin, int maxBin) {
+  // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands?p=133842&viewfull=1#post133842
+  float increment = 0.1, eTest, n;
+  int b, count, d;
+
+  for (eTest = 1; eTest < maxBin; eTest += increment) {     // Find E through brute force calculations
+    count = minBin;
+    for (b = 0; b < bands; b++) {                         // Calculate full log values
+      n = pow(eTest, b);
+      d = int(n + 0.5);
+      count += d;
+    }
+
+    if (count > maxBin) {     // We calculated over our last bin
+      eTest -= increment;   // Revert back to previous calculation increment
+      increment /= 10.0;    // Get a finer detailed calculation & increment a decimal point lower
+
+      if (increment < 0.0000001) {       // Ran out of calculations. Return previous E. Last bin will be lower than (bins-1)
+        return (eTest - increment);
+      }
+    } else if (count == maxBin) {  // We found the correct E
+      return eTest;       // Return calculated E
+    }
+  }
+
+  return 0;                 // Return error 0
 }
 
 void setup() {
@@ -122,7 +185,7 @@ void setup() {
   // audioShield.eqBands(-0.80, -0.75, -0.50, 0.50, 0.80);  // the great northern
   // audioShield.eqBands(-0.5, -.2, 0, .2, .5);  // todo: tune this
   //audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
-  audioShield.eqBands(0.0, 0, 0, 0, 0);  // todo: tune this
+  audioShield.eqBands(0.0, 0, 0, 0, 0.1);  // todo: tune this
 
   audioShield.unmuteHeadphone();  // for debugging
 
@@ -131,188 +194,30 @@ void setup() {
     sortedLevelIndex[i] = i;
   }
 
+  // calculate bin sizes based on how many outputs and levelsPerOutput
+  // TODO: naming of bin vs level vs output is confusing
+  // TODO: pass args to this instead of using globals
+  getFFTBins();
+
   Serial.println("Starting...");
 }
 
 // we could/should pass fft and level as args
 void updateLevelsFromFFT() {
-  // TODO: go numb to constant noise on a per-bin basis
+  // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
 
-  // read the 512 FFT frequencies into numOutputs levels
+  // read the FFT frequencies into numOutputs levels
   // music is heard in octaves, but the FFT data
   // is linear, so for the higher octaves, read
   // many FFT bins together.
 
-  // See this conversation to change this to more or less than 16 log-scaled bands
-  // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
-
-  // TODO: tune these. maybe write a formula, but i think tuning by hand will be prettiest
-  // TODO: have numOutputs = numOutputs * 3 and then set the color from there
-  switch(numOutputs) {
-    case 0:
-    case 1:
-      // TODO: this doesn't look right on our line graph
-      currentLevel[0]  = fft1024.read(0, 465);  // TODO: tune this 465 = 20k
-      break;
-    case 2:
-      currentLevel[0]  = fft1024.read(1, 10);  // TODO: tune this
-      currentLevel[1]  = fft1024.read(11, 82);  // TODO: tune this
-      break;
-    case 3:
-      currentLevel[0]  = fft1024.read(1, 6);  // TODO: tune this
-      currentLevel[1]  = fft1024.read(7, 10);  // TODO: tune this
-      currentLevel[2]  = fft1024.read(11, 82);  // TODO: tune this
-      break;
-    case 4:
-      currentLevel[0]  = fft1024.read(1, 6);  // TODO: tune this
-      currentLevel[1]  = fft1024.read(7, 20);  // TODO: tune this
-      currentLevel[2]  = fft1024.read(21, 41);  // TODO: tune this
-      currentLevel[3]  = fft1024.read(42, 186);  // TODO: tune this
-      break;
-    case 5:
-      currentLevel[0]  = fft1024.read(1, 6);  // TODO: tune this
-      currentLevel[1]  = fft1024.read(7, 10);  // TODO: tune this
-      currentLevel[2]  = fft1024.read(11, 20);  // TODO: tune this
-      currentLevel[3]  = fft1024.read(21, 41);  // TODO: tune this
-      currentLevel[4]  = fft1024.read(42, 186);  // TODO: tune this
-      break;
-    case 6:
-    // TODO: tune this. it worked ok for el, but LED
-      currentLevel[0]  = fft1024.read(1, 3);   // 110
-      currentLevel[1]  = fft1024.read(4, 6);   // 220
-      currentLevel[2]  = fft1024.read(7, 10);  // 440
-      currentLevel[3]  = fft1024.read(11, 20);  // 880
-      currentLevel[4]  = fft1024.read(21, 41);  // 1763
-      currentLevel[5]  = fft1024.read(42, 186);  // 7998 todo: tune this
-      break;
-    case 7:
-      currentLevel[0]  = fft1024.read(1, 3);  // TODO: tune this
-      currentLevel[1]  = fft1024.read(4, 6);  // TODO: tune this
-      currentLevel[2]  = fft1024.read(7, 10);  // TODO: tune this
-      currentLevel[3]  = fft1024.read(11, 20);  // TODO: tune this
-      currentLevel[4]  = fft1024.read(21, 41);  // TODO: tune this
-      currentLevel[5]  = fft1024.read(42, 82);  // TODO: tune this
-      currentLevel[6]  = fft1024.read(83, 186);  // TODO: tune this
-      break;
-    case 8:
-      currentLevel[0]  = fft1024.read(1, 15);
-      currentLevel[1]  = fft1024.read(16, 32);
-      currentLevel[2]  = fft1024.read(33, 46);
-      currentLevel[3]  = fft1024.read(47, 66);
-      currentLevel[4]  = fft1024.read(67, 93);
-      currentLevel[5]  = fft1024.read(94, 131);
-      currentLevel[6]  = fft1024.read(132, 184);
-      currentLevel[7]  = fft1024.read(185, 419);  // 18kHz
-      break;
-    case 9:
-    case 10:
-    case 11:
-    case 12:
-    case 13:
-    case 14:
-    case 15:
-    case 16:
-    default:
-      // these bands are from pjrc. we should try to have the other ones match this growth rate
-      // TODO: maybe skip the top and bottom bins?
-      currentLevel[0]  = fft1024.read(1);  // TODO: skip bin 0
-      currentLevel[1]  = fft1024.read(2);
-      currentLevel[2]  = fft1024.read(3, 4);
-      currentLevel[3]  = fft1024.read(5, 6);
-      currentLevel[4]  = fft1024.read(7, 10);
-      currentLevel[5]  = fft1024.read(11, 15);
-      currentLevel[6]  = fft1024.read(16, 22);
-      currentLevel[7]  = fft1024.read(23, 32);
-      currentLevel[8]  = fft1024.read(33, 46);
-      currentLevel[9]  = fft1024.read(47, 66);
-      currentLevel[10] = fft1024.read(67, 93);
-      currentLevel[11] = fft1024.read(94, 131);
-      currentLevel[12] = fft1024.read(132, 184);
-      currentLevel[13] = fft1024.read(185, 257);
-      currentLevel[14] = fft1024.read(258, 359);
-      currentLevel[15] = fft1024.read(360, 465);   // 465 = 20k
-      break;
-    case 17:
-    case 18:
-    case 19:
-      // 'standard' (third) octave bands (skipping 0 and the high frequencies)
-      // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
-      //     1     2     4     6     9    12    16    21    27    35    45    58    74    94   119   151   191   242   306   387   489
-      //     1     3     5     8    11    15    20    26    34    44    57    73    93   118   150   190   241   305   386   488   511
-      currentLevel[0]  = fft1024.read(1);
-      currentLevel[1]  = fft1024.read(2, 3);
-      currentLevel[2]  = fft1024.read(4, 5);
-      currentLevel[3]  = fft1024.read(6, 8);
-      currentLevel[4]  = fft1024.read(9, 11);
-      currentLevel[5]  = fft1024.read(12, 15);
-      currentLevel[6]  = fft1024.read(16, 20);
-      currentLevel[7]  = fft1024.read(21, 26);
-      currentLevel[8]  = fft1024.read(27, 34);
-      currentLevel[9]  = fft1024.read(35, 44);
-      currentLevel[10] = fft1024.read(45, 57);
-      currentLevel[11] = fft1024.read(58, 73);
-      currentLevel[12] = fft1024.read(74, 93);
-      currentLevel[13] = fft1024.read(94, 118);
-      currentLevel[14] = fft1024.read(119, 150);
-      currentLevel[15] = fft1024.read(151, 190);
-      currentLevel[16] = fft1024.read(191, 241);
-      currentLevel[17] = fft1024.read(242, 305);
-      currentLevel[18] = fft1024.read(306, 386);
-      break;
-    case 20:
-      // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
-      //     1     2     4     6     9    12    16    21    27    35    45    58    74    94   119   151   191   242   306   387   489
-      //     1     3     5     8    11    15    20    26    34    44    57    73    93   118   150   190   241   305   386   488   511
-      currentLevel[0]  = fft1024.read(1);  // TODO: skip this bin?
-      currentLevel[1]  = fft1024.read(2, 3);
-      currentLevel[2]  = fft1024.read(4, 5);
-      currentLevel[3]  = fft1024.read(6, 8);
-      currentLevel[4]  = fft1024.read(9, 11);
-      currentLevel[5]  = fft1024.read(12, 15);
-      currentLevel[6]  = fft1024.read(16, 20);
-      currentLevel[7]  = fft1024.read(21, 26);
-      currentLevel[8]  = fft1024.read(27, 34);
-      currentLevel[9]  = fft1024.read(35, 44);
-      currentLevel[10] = fft1024.read(45, 57);
-      currentLevel[11] = fft1024.read(58, 73);
-      currentLevel[12] = fft1024.read(74, 93);
-      currentLevel[13] = fft1024.read(94, 118);
-      currentLevel[14] = fft1024.read(119, 150);
-      currentLevel[15] = fft1024.read(151, 190);
-      currentLevel[16] = fft1024.read(191, 241);
-      currentLevel[17] = fft1024.read(242, 305);
-      currentLevel[18] = fft1024.read(306, 386);
-      currentLevel[19] = fft1024.read(387, 488);  // 488 = ~21k  //TODO: this is higher than we care about
-      break;
-    case 21:
-    case 23:
-    case 24:
-      // TODO: properly fill this. if we do 3 possible colors for each output with 8 outputs, we need this. a formula is looking better
-      currentLevel[0]  = fft1024.read(0);  // TODO: skip this bin?
-      currentLevel[1]  = fft1024.read(1);
-      currentLevel[2]  = fft1024.read(2, 3);
-      currentLevel[3]  = fft1024.read(4, 6);
-      currentLevel[4]  = fft1024.read(7, 10);
-      currentLevel[5]  = fft1024.read(11, 15);
-      currentLevel[6]  = fft1024.read(16, 22);
-      currentLevel[7]  = fft1024.read(23, 32);
-      currentLevel[8]  = fft1024.read(33, 46);
-      currentLevel[9]  = fft1024.read(47, 66);
-      currentLevel[10] = fft1024.read(67, 93);
-      currentLevel[11] = fft1024.read(94, 131);
-      currentLevel[12] = fft1024.read(132, 184);
-      currentLevel[13] = fft1024.read(185, 257);
-      currentLevel[14] = fft1024.read(258, 359);
-      currentLevel[15] = fft1024.read(360, 465);
-      currentLevel[16] = fft1024.read(360, 465);
-      currentLevel[17] = fft1024.read(360, 465);
-      currentLevel[18] = fft1024.read(360, 465);
-      currentLevel[19] = fft1024.read(360, 465);
-      currentLevel[20] = fft1024.read(360, 465);
-      currentLevel[21] = fft1024.read(360, 465);
-      currentLevel[22] = fft1024.read(360, 465);
-      currentLevel[23] = fft1024.read(360, 465);   // 465 = 20k
-      break;
+  for (int i = 0; i < numBands; i++) {
+    if (i == numBands) {
+      // avoid rounding errors and always have the last level go to the max bin
+      currentLevel[i] = fft1024.read(fftBins[i], maxBin);
+    } else {
+      currentLevel[i] = fft1024.read(fftBins[i], fftBins[i + 1] - 1);
+    }
   }
 }
 
@@ -375,6 +280,7 @@ void loop() {
     qsort(sortedLevelIndex, numOutputs, sizeof(float), compare_levels);
 
     // turn on up to maxOn loud levels in order of loudest to quietest
+    // TODO: iterate over numBands instead of numOutputs
     for (int j = 0; j < numOutputs; j++) {
       int i = sortedLevelIndex[j];
 
@@ -395,7 +301,7 @@ void loop() {
           }
 
           // map(value, fromLow, fromHigh, toLow, toHigh)
-          // TODO: set color_hue based on subdividing this level
+          // TODO: set color_hue based on weighted average of nearby loud levels
           int color_hue = map(i, 0, numOutputs, 0, 255); // TODO: 255 == 0 so we map to numOutputs and not numOutputs-1
           // TODO: what should saturation be? maybe not 255
           // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
@@ -406,6 +312,7 @@ void loop() {
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
+          // TODO: color from a pallete instead?
           leds[i] = CHSV(color_hue, 255, color_value);
 
           // make sure we stay on for a minimum amount of time
@@ -414,7 +321,7 @@ void loop() {
         }
       }
 
-      // decay maxLevel
+      // decay maxLevel (but not less than minMaxLevel)
       maxLevel[i] = (decayMax * maxLevel[i]) + ((1 - decayMax) * minMaxLevel);
     }
 
