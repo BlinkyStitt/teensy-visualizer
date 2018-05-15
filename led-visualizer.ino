@@ -40,7 +40,7 @@ AudioControlSGTL5000      audioShield;    //xy=366,225
 
 elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
-const int numOutputs = 16;
+const int numOutputs = 19;
 
 // TODO: CHSV colors[numOutputs * numLevelsPerOutput]
 CRGB leds[numOutputs];
@@ -215,10 +215,10 @@ void updateLevelsFromFFT() {
     default:
       // these bands are from pjrc. we should try to have the other ones match this growth rate
       // TODO: maybe skip the top and bottom bins?
-      currentLevel[0]  = fft1024.read(0);  // TODO: skip this bin?
-      currentLevel[1]  = fft1024.read(1);
-      currentLevel[2]  = fft1024.read(2, 3);
-      currentLevel[3]  = fft1024.read(4, 6);
+      currentLevel[0]  = fft1024.read(1);  // TODO: skip bin 0
+      currentLevel[1]  = fft1024.read(2);
+      currentLevel[2]  = fft1024.read(3, 4);
+      currentLevel[3]  = fft1024.read(5, 6);
       currentLevel[4]  = fft1024.read(7, 10);
       currentLevel[5]  = fft1024.read(11, 15);
       currentLevel[6]  = fft1024.read(16, 22);
@@ -235,7 +235,55 @@ void updateLevelsFromFFT() {
     case 17:
     case 18:
     case 19:
+      // 'standard' (third) octave bands (skipping 0 and the high frequencies)
+      // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
+      //     1     2     4     6     9    12    16    21    27    35    45    58    74    94   119   151   191   242   306   387   489
+      //     1     3     5     8    11    15    20    26    34    44    57    73    93   118   150   190   241   305   386   488   511
+      currentLevel[0]  = fft1024.read(1);
+      currentLevel[1]  = fft1024.read(2, 3);
+      currentLevel[2]  = fft1024.read(4, 5);
+      currentLevel[3]  = fft1024.read(6, 8);
+      currentLevel[4]  = fft1024.read(9, 11);
+      currentLevel[5]  = fft1024.read(12, 15);
+      currentLevel[6]  = fft1024.read(16, 20);
+      currentLevel[7]  = fft1024.read(21, 26);
+      currentLevel[8]  = fft1024.read(27, 34);
+      currentLevel[9]  = fft1024.read(35, 44);
+      currentLevel[10] = fft1024.read(45, 57);
+      currentLevel[11] = fft1024.read(58, 73);
+      currentLevel[12] = fft1024.read(74, 93);
+      currentLevel[13] = fft1024.read(94, 118);
+      currentLevel[14] = fft1024.read(119, 150);
+      currentLevel[15] = fft1024.read(151, 190);
+      currentLevel[16] = fft1024.read(191, 241);
+      currentLevel[17] = fft1024.read(242, 305);
+      currentLevel[18] = fft1024.read(306, 386);
+      break;
     case 20:
+      // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
+      //     1     2     4     6     9    12    16    21    27    35    45    58    74    94   119   151   191   242   306   387   489
+      //     1     3     5     8    11    15    20    26    34    44    57    73    93   118   150   190   241   305   386   488   511
+      currentLevel[0]  = fft1024.read(1);  // TODO: skip this bin?
+      currentLevel[1]  = fft1024.read(2, 3);
+      currentLevel[2]  = fft1024.read(4, 5);
+      currentLevel[3]  = fft1024.read(6, 8);
+      currentLevel[4]  = fft1024.read(9, 11);
+      currentLevel[5]  = fft1024.read(12, 15);
+      currentLevel[6]  = fft1024.read(16, 20);
+      currentLevel[7]  = fft1024.read(21, 26);
+      currentLevel[8]  = fft1024.read(27, 34);
+      currentLevel[9]  = fft1024.read(35, 44);
+      currentLevel[10] = fft1024.read(45, 57);
+      currentLevel[11] = fft1024.read(58, 73);
+      currentLevel[12] = fft1024.read(74, 93);
+      currentLevel[13] = fft1024.read(94, 118);
+      currentLevel[14] = fft1024.read(119, 150);
+      currentLevel[15] = fft1024.read(151, 190);
+      currentLevel[16] = fft1024.read(191, 241);
+      currentLevel[17] = fft1024.read(242, 305);
+      currentLevel[18] = fft1024.read(306, 386);
+      currentLevel[19] = fft1024.read(387, 488);  // 488 = ~21k  //TODO: this is higher than we care about
+      break;
     case 21:
     case 23:
     case 24:
