@@ -28,7 +28,7 @@
 #define LED_CLOCK_PIN      1  // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 200  // TODO: read from SD
+#define DEFAULT_BRIGHTNESS 60  // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND  120
 
 AudioInputI2S             i2s1;           //xy=139,91
@@ -44,7 +44,7 @@ const int numOutputs = 8;
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
 int numOn = 0;
-int maxOn = 5;
+int maxOn = 7;
 
 CRGB leds[numOutputs];
 
@@ -52,7 +52,7 @@ CRGB leds[numOutputs];
 float decayAvg = 0.60;
 // how close a sound has to be to the loudest sound in order to activate
 // TODO: tune this! was .99 with EL, but LED should probably be different
-float activateDifference = 0.98;
+float activateDifference = 0.995;
 // simple % decrease
 float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
@@ -71,14 +71,6 @@ unsigned long lastUpdate = 0;
 
 // keep the lights from blinking too fast
 uint minOnMs = 200; // 118? 150? 184? 200?  // the shortest amount of time to leave an output on. todo: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
-
-// https://forum.pjrc.com/threads/33390-FFT-convert-real-values-to-decibles
-// TODO: use this for something?
-float db(float n, float r) {
-  // r is the dB reference (here better calibration) value and describes microphone sensitivity and all gains in the processing chain
-  if (n <= 0) return r-96;  // or whatever you consider to be "off"
-  return r+log10f(n) * 20.0f;
-}
 
 /* sort the levels normalized against their max
  *
@@ -273,17 +265,17 @@ void updateLevelsFromFFT() {
   }
 }
 
-float getLocalMaxLevel(int i) {
+float getLocalMaxLevel(int i, float scale_neighbor) {
     float localMaxLevel = maxLevel[i];
 
     if (i != 0) {
       // check previous level if we aren't the first level
-      localMaxLevel = max(localMaxLevel, maxLevel[i - 1]);
+      localMaxLevel = max(localMaxLevel, maxLevel[i - 1] * scale_neighbor);
     }
 
     if (i != numOutputs) {
       // check the next level if we aren't the last level
-      localMaxLevel = max(localMaxLevel, maxLevel[i + 1]);
+      localMaxLevel = max(localMaxLevel, maxLevel[i + 1] * scale_neighbor);
     }
 
     return localMaxLevel;
@@ -306,7 +298,7 @@ void loop() {
       }
 
       // turn off if current level is less than the activation threshold
-      if (currentLevel[i] < maxLevel[i] * activateDifference) {
+      if (currentLevel[i] < getLocalMaxLevel(i, 0.66) * activateDifference) {
         // the output should be off
         if (elapsedMs < turnOffMsArray[i]) {
           // the output has not been on for long enough to prevent flicker
@@ -314,7 +306,7 @@ void loop() {
           // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
           // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
           // using "video" scaling, meaning: never fading to full black
-          leds[i].fadeLightBy(int((1.0 - decayMax) * 255));
+          leds[i].fadeLightBy(int((1.0 - decayMax) * 6.0 * 255));
         } else {
           // the output has been on for at least minOnMs and is quiet now
           // if it is on, turn it off
@@ -335,8 +327,8 @@ void loop() {
     for (int j = 0; j < numOutputs; j++) {
       int i = sortedLevelIndex[j];
 
-      // TODO: also check the neighbor maxLevels, too
-      if (currentLevel[i] >= maxLevel[i] * activateDifference) {
+      // check if current is close to the last max (also check the neighbor maxLevels)
+      if (currentLevel[i] >= getLocalMaxLevel(i, 0.66) * activateDifference) {
         // this light should be on!
         if (numOn >= maxOn) {
           // except we already have too many lights on! don't do anything since this light is already off
@@ -358,7 +350,8 @@ void loop() {
           // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
 
           // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
-          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i) * 255));
+          // TODO: s-curve?
+          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, 1.1) * 255));
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
@@ -382,7 +375,7 @@ void loop() {
 
       if (leds[i]) {
         //Serial.print(leds[i].getLuma() / 255.0);
-        Serial.print(maxLevel[i]);
+        Serial.print(currentLevel[i]);
       } else {
         Serial.print("    ");
       }
