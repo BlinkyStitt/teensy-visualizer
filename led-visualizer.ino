@@ -62,7 +62,7 @@ float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
 
 float scale_neighbor_max = 0.616;  // how much of the neighbor's max to consider when deciding when to turn on
-float scale_neighbor_value = 1.1;  // how much of the neighbor's max to consider when deciding how bright to be
+float scale_neighbor_brightness = 1.1;  // how much of the neighbor's max to consider when deciding how bright to be
 
 // arrays to keep track of the volume for each frequency band
 // TODO: eventually track numOutputs *3 or something like that and then have the color shift to follow the loudest of the 3
@@ -185,7 +185,7 @@ void setup() {
   // audioShield.eqBands(-0.80, -0.75, -0.50, 0.50, 0.80);  // the great northern
   // audioShield.eqBands(-0.5, -.2, 0, .2, .5);  // todo: tune this
   //audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
-  audioShield.eqBands(0.0, 0, 0, 0, 0.1);  // todo: tune this
+  audioShield.eqBands(0.0, 0, 0, 0.1, 0.33);  // todo: tune this
 
   audioShield.unmuteHeadphone();  // for debugging
 
@@ -308,7 +308,7 @@ void loop() {
 
           // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
           // TODO: s-curve?
-          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_value) * 255));
+          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness) * 255));
 
           // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
           // HSV makes it easy to cycle through the rainbow
@@ -333,7 +333,8 @@ void loop() {
 
       if (leds[i]) {
         //Serial.print(leds[i].getLuma() / 255.0);
-        Serial.print(currentLevel[i]);
+        //Serial.print(currentLevel[i]);
+        Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
       } else {
         Serial.print("    ");
       }
