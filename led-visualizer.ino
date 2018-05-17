@@ -28,7 +28,7 @@
 #define LED_CLOCK_PIN      1  // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 200  // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 100  // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND  120
 
 AudioInputI2S             i2s1;           //xy=139,91
@@ -40,15 +40,18 @@ AudioControlSGTL5000      audioShield;    //xy=366,225
 
 elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
-int minBin = 0;    // skip 0-43Hz. it's too noisy
-int maxBin = 419;  // skip over 18kHz
+// each frequencyBin = ~43Hz
+// each frequencyBand is a sum of frequencyBins.
+int minBin = 1;    // skip 0-43Hz. it's too noisy
+int maxBin = 373;  // skip over 16kHz
 
+const int numLEDs = 60;  // TODO: have this be the max and have SD card override
 const int numOutputs = 16;  // TODO: have this be the max and have SD card override
-const int numBands = numOutputs;  // TODO: numOutputs * 2 or 3 and then shift the color for the led
+const int numFreqBands = numOutputs;  // TODO: numOutputs * 2 or 3 and then shift the color for the led  // TODO: rename to numColors
 
-int fftBins[numBands];
+int fftBins[numFreqBands];
 
-// TODO: CHSV colors[numOutputs * numBandsPerOutput]
+// TODO: CHSV colors[numOutputs * numFreqBandsPerOutput]
 CRGB leds[numOutputs];
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
@@ -94,15 +97,18 @@ void getFFTBins() {
   float e, n;
   int count = minBin, d;
 
-  e = FindE(numBands, minBin, maxBin);   // Find calculated E value
+  e = FindE(numFreqBands, minBin, maxBin);   // Find calculated E value
 
   while (!Serial && (millis() <= 6000));  // Wait for Serial interface
 
   if (e) {                                // If a value was returned continue
     Serial.printf("E = %4.4f\n", e);      // Print calculated E value
-    for (int b = 0; b < numBands; b++) {  // Test and print the bins from the calculated E
+    Serial.printf("  i  low high\n");
+    for (int b = 0; b < numFreqBands; b++) {  // Test and print the bins from the calculated E
       n = pow(e, b);
       d = int(n + 0.5);
+
+      Serial.printf("%3d ", b);
 
       Serial.printf("%4d ", count);       // Print low bin
       fftBins[b] = count;
@@ -211,8 +217,8 @@ void updateLevelsFromFFT() {
   // is linear, so for the higher octaves, read
   // many FFT bins together.
 
-  for (int i = 0; i < numBands; i++) {
-    if (i == numBands) {
+  for (int i = 0; i < numFreqBands; i++) {
+    if (i == numFreqBands) {
       // avoid rounding errors and always have the last level go to the max bin
       currentLevel[i] = fft1024.read(fftBins[i], maxBin);
     } else {
@@ -280,7 +286,7 @@ void loop() {
     qsort(sortedLevelIndex, numOutputs, sizeof(float), compare_levels);
 
     // turn on up to maxOn loud levels in order of loudest to quietest
-    // TODO: iterate over numBands instead of numOutputs
+    // TODO: iterate over numFreqBands instead of numOutputs
     for (int j = 0; j < numOutputs; j++) {
       int i = sortedLevelIndex[j];
 
@@ -362,3 +368,13 @@ void loop() {
   FastLED.delay(1);
 }
 
+
+/* TODO
+
+rename leds[] to visualizer[] (and change to HSV) and create a new "leds" variable that has the actual length of the strip.
+then we can spread the visualizer out across the leds, rotate it, or repeat it. all sorts of modifications (maybe based off the "sparkle" freqs?)
+maybe visualizer -> leds is where the code to shrink visualizer down to fewer lights could happen.
+if we keep it HSV, we can take the color with the most brightness and then add the secondary colors to it somehow.
+
+
+ */
