@@ -11,8 +11,8 @@
 
 // Use these with the audio adaptor board
 #define SDCARD_CS_PIN    10
-#define SDCARD_MOSI_PIN  7
-#define SDCARD_SCK_PIN   14
+#define SPI_MOSI_PIN  7
+#define SPI_SCK_PIN   14
 #define VOLUME_KNOB      A2
 
 // audio adaptor board
@@ -24,12 +24,17 @@
 // clock
 #define ALT_SCK_PIN       14
 
-#define LED_DATA_PIN       0  // TODO: what pin. i want to share with the SD card
-#define LED_CLOCK_PIN      1  // TODO: what pin. i want to share with the SD card
+#define LED_DATA_PIN       0  // green // TODO: what pin. i want to share with the SD card
+#define LED_CLOCK_PIN      1  // blue // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 100  // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 60  // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND  120
+
+#define LED_MODE_STRETCH   0
+#define LED_MODE_REPEAT    1  // TODO: this isn't working
+
+int led_mode = LED_MODE_REPEAT;  // TODO: read from SD card
 
 AudioInputI2S             i2s1;           //xy=139,91
 AudioOutputI2S            i2s2;           //xy=392,32
@@ -41,22 +46,24 @@ AudioControlSGTL5000      audioShield;    //xy=366,225
 elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
 // each frequencyBin = ~43Hz
-// each frequencyBand is a sum of frequencyBins.
 int minBin = 1;    // skip 0-43Hz. it's too noisy
 int maxBin = 373;  // skip over 16kHz
 
-const int numLEDs = 60;  // TODO: have this be the max and have SD card override
+// TODO: how should we handle these not being even multiples of eachother?
+const int numLEDs = 100;  // TODO: have this be the max and have SD card override
 const int numOutputs = 16;  // TODO: have this be the max and have SD card override
-const int numFreqBands = numOutputs;  // TODO: numOutputs * 2 or 3 and then shift the color for the led  // TODO: rename to numColors
+const int numFreqBands = 16;
 
-int fftBins[numFreqBands];
+int freqBands[numFreqBands];
 
-// TODO: CHSV colors[numOutputs * numFreqBandsPerOutput]
-CRGB leds[numOutputs];
+// TODO: use these variables.
+CHSV frequencyColors[numFreqBands];
+CHSV outputs[numOutputs];
+CRGB leds[numLEDs];
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
 int numOn = 0;
-int maxOn = numOutputs * 0.75;
+int maxOn = numOutputs * 3 / 4;
 
 // how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
 float activateDifference = 0.98;
@@ -69,14 +76,14 @@ float scale_neighbor_brightness = 1.1;  // how much of the neighbor's max to con
 
 // arrays to keep track of the volume for each frequency band
 // TODO: eventually track numOutputs *3 or something like that and then have the color shift to follow the loudest of the 3
-float maxLevel[numOutputs];
-float currentLevel[numOutputs];
+float maxLevel[numFreqBands];
+float currentLevel[numFreqBands];
 
 // going through the levels loudest to quietest makes it so we can ensure the loudest get turned on ASAP
-int sortedLevelIndex[numOutputs];
+int sortedLevelIndex[numFreqBands];
 
 // keep track of when to turn lights off so that they don't flicker off if the sound drops
-unsigned long turnOffMsArray[numOutputs];
+unsigned long turnOffMsArray[numFreqBands];
 unsigned long lastUpdate = 0;
 
 // keep the lights from blinking too fast
@@ -92,7 +99,7 @@ static int compare_levels(const void *a, const void *b)
   return (currentLevel[bb] / maxLevel[bb]) - (currentLevel[aa] / maxLevel[aa]);
 }
 
-void getFFTBins() {
+void setupFFTBins() {
   // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands?p=133842&viewfull=1#post133842
   float e, n;
   int count = minBin, d;
@@ -111,7 +118,7 @@ void getFFTBins() {
       Serial.printf("%3d ", b);
 
       Serial.printf("%4d ", count);       // Print low bin
-      fftBins[b] = count;
+      freqBands[b] = count;
 
       count += d - 1;
       Serial.printf("%4d\n", count);      // Print high bin
@@ -152,27 +159,24 @@ float FindE(int bands, int minBin, int maxBin) {
   return 0;                 // Return error 0
 }
 
-void setup() {
-  Serial.begin(115200);  // todo: tune this
-
-  // setup SPI for the Audio board (which has an SD card reader)
-  SPI.setMOSI(SDCARD_MOSI_PIN);
-  SPI.setSCK(SDCARD_SCK_PIN);
-
+void setupSD() {
   // slave select pin for SPI
   pinMode(SDCARD_CS_PIN, OUTPUT);
 
-  SPI.begin();
-  // TODO: read SD card here to configure things
+  SPI.begin();  // should this be here?
 
-  // TODO: read numOutputs from the SD card
+  // read values from the SD card
+}
 
+void setupLights() {
   // TODO: clock select pin for FastLED to OUTPUT like we do for the SDCARD?
-  FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numOutputs).setCorrection( TypicalSMD5050 );;
+  FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numLEDs).setCorrection( TypicalSMD5050 );;
   FastLED.setBrightness(DEFAULT_BRIGHTNESS);  // TODO: read this from the SD card
   FastLED.clear();
   FastLED.show();
+}
 
+void setupAudio() {
   // Audio requires memory to work. I haven't seen this go over 11
   AudioMemory(12);
 
@@ -191,19 +195,36 @@ void setup() {
   // audioShield.eqBands(-0.80, -0.75, -0.50, 0.50, 0.80);  // the great northern
   // audioShield.eqBands(-0.5, -.2, 0, .2, .5);  // todo: tune this
   //audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
-  audioShield.eqBands(0.0, 0, 0, 0.1, 0.33);  // todo: tune this
+  audioShield.eqBands(0.0, 0.0, 0.0, 0.1, 0.33);  // todo: tune this
 
   audioShield.unmuteHeadphone();  // for debugging
 
-  // setup sorting
+  // setup array for sorting
   for (int i = 0; i < numOutputs; i++) {
     sortedLevelIndex[i] = i;
   }
+}
 
-  // calculate bin sizes based on how many outputs and levelsPerOutput
-  // TODO: naming of bin vs level vs output is confusing
-  // TODO: pass args to this instead of using globals
-  getFFTBins();
+void setup() {
+  Serial.begin(115200);  // todo: tune this
+
+  Serial.println("Setting up...");
+
+  // setup SPI for the Audio board (which has an SD card reader)
+  SPI.setMOSI(SPI_MOSI_PIN);
+  SPI.setSCK(SPI_SCK_PIN);
+
+  setupSD();
+
+  // TODO: read SD card here to configure things
+
+  // TODO: read numOutputs from the SD card
+  
+  setupLights();
+  
+  setupAudio();
+
+  setupFFTBins();
 
   Serial.println("Starting...");
 }
@@ -217,14 +238,12 @@ void updateLevelsFromFFT() {
   // is linear, so for the higher octaves, read
   // many FFT bins together.
 
-  for (int i = 0; i < numFreqBands; i++) {
-    if (i == numFreqBands) {
-      // avoid rounding errors and always have the last level go to the max bin
-      currentLevel[i] = fft1024.read(fftBins[i], maxBin);
-    } else {
-      currentLevel[i] = fft1024.read(fftBins[i], fftBins[i + 1] - 1);
-    }
+  for (int i = 0; i < numFreqBands - 1; i++) {
+    currentLevel[i] = fft1024.read(freqBands[i], freqBands[i + 1] - 1);
   }
+
+  // the last level always goes to maxBin
+  currentLevel[numFreqBands - 1] = fft1024.read(freqBands[numFreqBands - 1], maxBin);
 }
 
 float getLocalMaxLevel(int i, float scale_neighbor) {
@@ -243,120 +262,195 @@ float getLocalMaxLevel(int i, float scale_neighbor) {
     return localMaxLevel;
 }
 
+void updateFrequencyColors() {
+  // read FFT frequency data into a bunch of levels. assign each level a color and a brightness
+  updateLevelsFromFFT();
+
+  // turn off any quiet levels. we do this before turning any lights on so that our loudest frequencies are most responsive
+  for (int i = 0; i < numFreqBands; i++) {
+    // update maxLevel
+    // TODO: don't just track max. track the % change. then do something with stddev of neighbors?
+    if (currentLevel[i] > maxLevel[i]) {
+      maxLevel[i] = currentLevel[i];
+    }
+  
+    // turn off if current level is less than the activation threshold
+    if (currentLevel[i] < getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
+      // the output should be off
+      if (elapsedMs < turnOffMsArray[i]) {
+        // the output has not been on for long enough to prevent flicker
+        // leave it on but reduce brightness at the same rate we reduce maxLevel (TODO: tune this)
+        // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
+        // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
+        // using "video" scaling, meaning: never fading to full black
+        // frequencyColors[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
+
+        // we were using video scaling to fade, but HSV doesn't have that.
+        frequencyColors[i].value *= decayMax;
+
+        // TODO: tune this minimum
+        if (frequencyColors[i].value < 25) {
+          frequencyColors[i].value = 25;
+        }
+      } else {
+        // the output has been on for at least minOnMs and is quiet now
+        // if it is on, turn it off
+        if (frequencyColors[i].value) {
+          frequencyColors[i].value = 0;
+          numOn -= 1;
+        }
+      }
+    }
+  }
+  
+  // sort the levels normalized against their max
+  // this allows us to prioritize turning on for the loudest sounds
+  qsort(sortedLevelIndex, numFreqBands, sizeof(float), compare_levels);
+  
+  // turn on up to maxOn loud levels in order of loudest to quietest
+  for (int j = 0; j < numFreqBands; j++) {
+    int i = sortedLevelIndex[j];
+  
+    // check if current is close to the last max (also check the neighbor maxLevels)
+    if (currentLevel[i] >= getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
+      // this light should be on!
+      if (numOn >= maxOn) {
+        // except we already have too many lights on! don't do anything since this light is already off
+        // don't break the loop because we still want to decay max level and process other lights
+      } else {
+        // we have room for the light! turn it on
+  
+        // if it isn't already on, increment numOn
+        if (! frequencyColors[i].value) {
+          // track to make sure we don't turn too many lights on. some configurations max out at 6.
+          // we don't do this every time because it could have already been on, but now we made it brighter
+          numOn += 1;
+        }
+  
+        // map(value, fromLow, fromHigh, toLow, toHigh)
+        int color_hue = map(i, 0, numFreqBands, 0, 255); // TODO: 255 == 0 so we map to numOutputs and not numOutputs-1
+        // TODO: what should saturation be? maybe not 255
+        // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
+  
+        // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
+        // TODO: s-curve? i think FastLED actually does a curve for us
+        // TODO: what should the min be?
+        int color_value = constrain(int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness) * 255), 25, 255);
+  
+        // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
+        // HSV makes it easy to cycle through the rainbow
+        // TODO: color from a pallete instead?
+        frequencyColors[i] = CHSV(color_hue, 255, color_value);
+  
+        // make sure we stay on for a minimum amount of time
+        // if we were already on, extend the time that we stay on
+        turnOffMsArray[i] = elapsedMs + minOnMs;
+      }
+    }
+  
+    // decay maxLevel (but not less than minMaxLevel)
+    maxLevel[i] = (decayMax * maxLevel[i]) + ((1 - decayMax) * minMaxLevel);
+  }
+  
+  // debug print
+  for (int i = 0; i < numFreqBands; i++) {
+    Serial.print("| ");
+  
+    // TODO: maybe do something with parity here? i think i don't have enough lights for that to matter at this point. do some research
+  
+    if (leds[i]) {
+      //Serial.print(leds[i].getLuma() / 255.0);
+      //Serial.print(currentLevel[i]);
+      Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
+    } else {
+      Serial.print("    ");
+    }
+  }
+  Serial.print("| ");
+  Serial.print(AudioMemoryUsageMax());
+  Serial.print(" blocks | ");
+  
+  // finish debug print
+  Serial.print(elapsedMs - lastUpdate);
+  Serial.println("ms");
+  lastUpdate = elapsedMs;
+  Serial.flush();
+}
+
+void mapFrequencyColorsToOutputs() {
+  for (int i = 0; i < numOutputs; i++) {
+    // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs > numFreqBands, but if not it skips some
+    if (numOutputs == numFreqBands) {
+      // TODO: is there a more efficient way to do this?
+      outputs[i] = frequencyColors[i];
+    } else if (numOutputs > numFreqBands) {
+      // spread the frequency bands out; multiple LEDs for one frequency
+      // this works. all the others seem broken
+      outputs[i] = frequencyColors[map(i, 0, numOutputs, 0, numFreqBands)];
+    } else {
+      // shrink frequency bands down. pick the brightest color
+
+      // start by setting it to the first available band.
+      int bottomFreqId = map(i, 0, numOutputs, 0, numFreqBands);
+
+      outputs[i] = frequencyColors[bottomFreqId];
+
+      int topFreqId = map(i + 1, 0, numOutputs, 0, numFreqBands);
+      for (int f = bottomFreqId + 1; f < topFreqId; f++) {
+        if (! frequencyColors[f].value) {
+          //TODO: dim it some to represent neighbor being off
+          continue;
+        }
+
+        if (! outputs[i].value) {
+          // output is off, simply set the color as is
+          //TODO: dim it some to represent neighbor being off
+          outputs[i] = frequencyColors[f];
+        } else {
+          // output has multiple frequencies to show
+          // TODO: don't just replace with the brighter. instead increase the brightness and shift the color or something to combine outputs[i] and frequencyColors[f]
+          if (outputs[i].value < frequencyColors[f].value) {
+            outputs[i] = frequencyColors[f];
+          }
+        }
+      }
+    }
+  }
+}
+
+void mapOutputsToLEDs() {
+  // TODO: this is pretty similar to mapFrequencyColorsToOutputs, but I think a generic function would actually be harder to follow
+  for (int i = 0; i < numLEDs; i++) {
+    if (numOutputs == numLEDs) {
+      leds[i] = outputs[i];
+    } else {
+      // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs > numFreqBands, but if not it skips some
+      // numLEDs should always be >= numOutputs. if its less, we should do the scaling with outputs instead
+      //if (numLEDs > numOutputs) {
+      if (led_mode == LED_MODE_STRETCH) {
+        // spread the frequency bands out; multiple LEDs for one frequency
+        leds[i] = frequencyColors[map(i, 0, numLEDs, 0, numOutputs)];
+      } else {
+        // simple repeat of the pattern
+        leds[i] = frequencyColors[i % numOutputs];
+        // TODO: rotate with memmove8?
+        // TODO: light up multiple lights for each output, too?
+      }
+    }
+  }
+}
+
 void loop() {
   // TODO: determine the note being played?
   // TODO: determine the tempo?
   // TODO: find the sum as well as the bins at least 10% as loud as the loudest bin IDs for extra details?
 
   if (fft1024.available()) {
-    updateLevelsFromFFT();
+    updateFrequencyColors();
 
-    // turn off any quiet levels. we do this before turning any lights on so that our loudest frequencies are most responsive
-    for (int i = 0; i < numOutputs; i++) {
-      // update maxLevel
-      // TODO: don't just track max. track the % change. then do something with stddev of neighbors?
-      if (currentLevel[i] > maxLevel[i]) {
-        maxLevel[i] = currentLevel[i];
-      }
+    mapFrequencyColorsToOutputs(); mapOutputsToLEDs();
 
-      // turn off if current level is less than the activation threshold
-      if (currentLevel[i] < getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
-        // the output should be off
-        if (elapsedMs < turnOffMsArray[i]) {
-          // the output has not been on for long enough to prevent flicker
-          // leave it on but reduce brightness at the same rate we reduce maxLevel (TODO: tune this)
-          // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
-          // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
-          // using "video" scaling, meaning: never fading to full black
-          leds[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
-        } else {
-          // the output has been on for at least minOnMs and is quiet now
-          // if it is on, turn it off
-          if (leds[i]) {
-            // TODO: this might be too abrupt
-            leds[i] = CRGB::Black;
-            numOn -= 1;
-          }
-        }
-      }
-    }
-
-    // sort the levels normalized against their max
-    // this allows us to prioritize turning on for the loudest sounds
-    qsort(sortedLevelIndex, numOutputs, sizeof(float), compare_levels);
-
-    // turn on up to maxOn loud levels in order of loudest to quietest
-    // TODO: iterate over numFreqBands instead of numOutputs
-    for (int j = 0; j < numOutputs; j++) {
-      int i = sortedLevelIndex[j];
-
-      // check if current is close to the last max (also check the neighbor maxLevels)
-      if (currentLevel[i] >= getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
-        // this light should be on!
-        if (numOn >= maxOn) {
-          // except we already have too many lights on! don't do anything since this light is already off
-          // don't break the loop because we still want to decay max level and process other lights
-        } else {
-          // we have room for the light! turn it on
-
-          // if it isn't already on, increment numOn
-          if (! leds[i]) {
-            // track to make sure we don't turn too many lights on. some configurations max out at 6.
-            // we don't do this every time because it could have already been on, but now we made it brighter
-            numOn += 1;
-          }
-
-          // map(value, fromLow, fromHigh, toLow, toHigh)
-          // TODO: set color_hue based on weighted average of nearby loud levels
-          int color_hue = map(i, 0, numOutputs, 0, 255); // TODO: 255 == 0 so we map to numOutputs and not numOutputs-1
-          // TODO: what should saturation be? maybe not 255
-          // set 255 as the max brightness. if that is too bright, FastLED.setBrightness can be changed in setup
-
-          // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
-          // TODO: s-curve?
-          int color_value = max(25, int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness) * 255));
-
-          // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
-          // HSV makes it easy to cycle through the rainbow
-          // TODO: color from a pallete instead?
-          leds[i] = CHSV(color_hue, 255, color_value);
-
-          // make sure we stay on for a minimum amount of time
-          // if we were already on, extend the time that we stay on
-          turnOffMsArray[i] = elapsedMs + minOnMs;
-        }
-      }
-
-      // decay maxLevel (but not less than minMaxLevel)
-      maxLevel[i] = (decayMax * maxLevel[i]) + ((1 - decayMax) * minMaxLevel);
-    }
-
-    // debug print
-    for (int i = 0; i < numOutputs; i++) {
-      Serial.print("| ");
-
-      // TODO: maybe do something with parity here? i think i don't have enough lights for that to matter at this point. do some research
-
-      if (leds[i]) {
-        //Serial.print(leds[i].getLuma() / 255.0);
-        //Serial.print(currentLevel[i]);
-        Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
-      } else {
-        Serial.print("    ");
-      }
-    }
-    Serial.print("| ");
-    Serial.print(AudioMemoryUsageMax());
-    Serial.print(" blocks | ");
-
-    // display the colors
     FastLED.show();
-
-    // finish debug print
-    Serial.print(elapsedMs - lastUpdate);
-    Serial.println("ms");
-    lastUpdate = elapsedMs;
-    Serial.flush();
 
     // using FastLED's delay allows for dithering
     // we sleep for a while inside the loop since we know we don't need to process anything for 11 or 12 ms
