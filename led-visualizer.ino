@@ -11,8 +11,8 @@
 
 // Use these with the audio adaptor board
 #define SDCARD_CS_PIN    10
-#define SPI_MOSI_PIN  7
-#define SPI_SCK_PIN   14
+#define SPI_MOSI_PIN     7
+#define SPI_SCK_PIN      14
 #define VOLUME_KNOB      A2
 
 // audio adaptor board
@@ -34,7 +34,7 @@
 #define LED_MODE_STRETCH   0
 #define LED_MODE_REPEAT    1  // TODO: this isn't working
 
-int led_mode = LED_MODE_REPEAT;  // TODO: read from SD card
+int led_mode = LED_MODE_STRETCH;  // TODO: read from SD card
 
 AudioInputI2S             i2s1;           //xy=139,91
 AudioOutputI2S            i2s2;           //xy=392,32
@@ -43,23 +43,25 @@ AudioConnection           patchCord1(i2s1, 0, i2s2, 0);
 AudioConnection           patchCord2(i2s1, 0, fft1024, 0);
 AudioControlSGTL5000      audioShield;    //xy=366,225
 
-elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
-
 // each frequencyBin = ~43Hz
 int minBin = 1;    // skip 0-43Hz. it's too noisy
 int maxBin = 373;  // skip over 16kHz
 
-// TODO: how should we handle these not being even multiples of eachother?
-const int numLEDs = 100;  // TODO: have this be the max and have SD card override
+// this looks best when they are even multiples of eachother, but
+const int numFreqBands = 16;  // TODO: have this be the max and have SD card override
+// TODO: explicit freqPerOutput since the map I'm doing isn't working
 const int numOutputs = 16;  // TODO: have this be the max and have SD card override
-const int numFreqBands = 16;
+
+const int ledsPerSpreadOutput = 2;
+const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
+
+const int numLEDs = 32;  // TODO: have this be the max and have SD card override
 
 int freqBands[numFreqBands];
-
-// TODO: use these variables.
 CHSV frequencyColors[numFreqBands];
-CHSV outputs[numOutputs];
-CRGB leds[numLEDs];
+CHSV outputs[numOutputs];  // frequencyColors are stretched/squished to fit this (squishing being what you probably want)
+CHSV outputsStretched[numSpreadOutputs];  // outputs are stretched to fit this
+CRGB leds[numLEDs];  // outputs repeats across this
 
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here since we have control over brightness)
 int numOn = 0;
@@ -88,6 +90,8 @@ unsigned long lastUpdate = 0;
 
 // keep the lights from blinking too fast
 uint minOnMs = 250; // 118? 150? 184? 200?  // the shortest amount of time to leave an output on. todo: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
+
+elapsedMillis elapsedMs = 0;    // todo: do we care if this overflows?
 
 /* sort the levels normalized against their max
  *
@@ -385,10 +389,10 @@ void mapFrequencyColorsToOutputs() {
       outputs[i] = frequencyColors[i];
     } else if (numOutputs > numFreqBands) {
       // spread the frequency bands out; multiple LEDs for one frequency
-      // this works. all the others seem broken
       outputs[i] = frequencyColors[map(i, 0, numOutputs, 0, numFreqBands)];
     } else {
       // shrink frequency bands down. pick the brightest color
+      // TODO: I don't think this is working
 
       // start by setting it to the first available band.
       int bottomFreqId = map(i, 0, numOutputs, 0, numFreqBands);
@@ -418,21 +422,29 @@ void mapFrequencyColorsToOutputs() {
   }
 }
 
-void mapOutputsToLEDs() {
+// TODO: i don't love this naming
+void mapOutputsToSpreadOutputs() {
+  for (int i = 0; i < numSpreadOutputs; i++) {
+    outputsStretched[i] = outputs[map(i, 0, numSpreadOutputs, 0, numOutputs)];
+  }
+}
+
+void mapSpreadOutputsToLEDs() {
   // TODO: this is pretty similar to mapFrequencyColorsToOutputs, but I think a generic function would actually be harder to follow
   for (int i = 0; i < numLEDs; i++) {
-    if (numOutputs == numLEDs) {
-      leds[i] = outputs[i];
+    if (numSpreadOutputs == numLEDs) {
+      leds[i] = outputsStretched[i];
     } else {
       // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs > numFreqBands, but if not it skips some
       // numLEDs should always be >= numOutputs. if its less, we should do the scaling with outputs instead
       //if (numLEDs > numOutputs) {
       if (led_mode == LED_MODE_STRETCH) {
         // spread the frequency bands out; multiple LEDs for one frequency
-        leds[i] = frequencyColors[map(i, 0, numLEDs, 0, numOutputs)];
+        // this probably be used since the outputs are already spread
+        leds[i] = outputsStretched[map(i, 0, numLEDs, 0, numSpreadOutputs)];
       } else {
         // simple repeat of the pattern
-        leds[i] = frequencyColors[i % numOutputs];
+        leds[i] = outputsStretched[i % numSpreadOutputs];
         // TODO: rotate with memmove8?
         // TODO: light up multiple lights for each output, too?
       }
@@ -448,7 +460,8 @@ void loop() {
   if (fft1024.available()) {
     updateFrequencyColors();
 
-    mapFrequencyColorsToOutputs(); mapOutputsToLEDs();
+    // I'm sure this could be a lot more efficient
+    mapFrequencyColorsToOutputs(); mapOutputsToSpreadOutputs(); mapSpreadOutputsToLEDs();
 
     FastLED.show();
 
