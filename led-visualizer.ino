@@ -28,13 +28,13 @@
 #define LED_CLOCK_PIN      1  // blue // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET        APA102
 #define LED_MODE           BGR
-#define DEFAULT_BRIGHTNESS 60  // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 255  // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND  120
 
 #define LED_MODE_STRETCH   0
 #define LED_MODE_REPEAT    1  // TODO: this isn't working
 
-int led_mode = LED_MODE_STRETCH;  // TODO: read from SD card
+int led_mode = LED_MODE_REPEAT;  // TODO: read from SD card
 
 AudioInputI2S             i2s1;           //xy=139,91
 AudioOutputI2S            i2s2;           //xy=392,32
@@ -52,10 +52,10 @@ const int numFreqBands = 16;  // TODO: have this be the max and have SD card ove
 // TODO: explicit freqPerOutput since the map I'm doing isn't working
 const int numOutputs = 16;  // TODO: have this be the max and have SD card override
 
-const int ledsPerSpreadOutput = 2;
+const int ledsPerSpreadOutput = 3;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
 
-const int numLEDs = 32;  // TODO: have this be the max and have SD card override
+const int numLEDs = 60;  // TODO: have this be the max and have SD card override
 
 int freqBands[numFreqBands];
 CHSV frequencyColors[numFreqBands];
@@ -73,7 +73,7 @@ float activateDifference = 0.98;
 float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
 
-float scale_neighbor_max = 0.616;  // how much of the neighbor's max to consider when deciding when to turn on
+float scale_neighbor_max = 0.666;  // how much of the neighbor's max to consider when deciding when to turn on
 float scale_neighbor_brightness = 1.1;  // how much of the neighbor's max to consider when deciding how bright to be
 
 // arrays to keep track of the volume for each frequency band
@@ -362,7 +362,7 @@ void updateFrequencyColors() {
   
     // TODO: maybe do something with parity here? i think i don't have enough lights for that to matter at this point. do some research
   
-    if (leds[i]) {
+    if (frequencyColors[i].value) {
       //Serial.print(leds[i].getLuma() / 255.0);
       //Serial.print(currentLevel[i]);
       Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
