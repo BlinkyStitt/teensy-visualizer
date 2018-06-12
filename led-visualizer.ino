@@ -28,7 +28,7 @@
 #define LED_CLOCK_PIN 1 // blue // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET APA102
 #define LED_MODE BGR
-#define DEFAULT_BRIGHTNESS 60 // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 255 // TODO: read from SD (maybe this should be on the volume knob)
 #define FRAMES_PER_SECOND 120
 
 #define LED_MODE_STRETCH 0
@@ -74,7 +74,7 @@ float activateDifference = 0.98;
 float decayMax = 0.98;
 float minMaxLevel = 0.15 / activateDifference;
 
-float scale_neighbor_max = 0.666;      // how much of the neighbor's max to consider when deciding when to turn on
+float scale_neighbor_max = 0.85;  // TODO: was .666      // how much of the neighbor's max to consider when deciding when to turn on
 float scale_neighbor_brightness = 1.1; // how much of the neighbor's max to consider when deciding how bright to be
 
 // arrays to keep track of the volume for each frequency band
