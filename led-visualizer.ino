@@ -47,9 +47,8 @@ AudioControlSGTL5000 audioShield; // xy=366,225
 int minBin = 1;   // skip 0-43Hz. it's too noisy
 int maxBin = 373; // skip over 16kHz
 
-// this looks best when they are even multiples of eachother, but
+// this looks best when they are even multiples of each other, but it should work if they aren't
 const int numFreqBands = 16; // TODO: have this be the max and have SD card override
-// TODO: explicit freqPerOutput since the map I'm doing isn't working
 const int numOutputs = 16; // TODO: have this be the max and have SD card override
 
 const int ledsPerSpreadOutput = 2;
@@ -90,10 +89,9 @@ int sortedLevelIndex[numFreqBands];
 unsigned long turnOffMsArray[numFreqBands];
 unsigned long lastUpdate = 0;
 
-// keep the lights from blinking too fast
-uint minOnMs =
-    250; // 118? 150? 184? 200?  // the shortest amount of time to leave an output on. todo: set this based on some sort
-         // of bpm detection? read from the SD card? have a button to switch between common settings?
+// keep the lights from blinking too fast. this is the shortest amount of time to leave an output on
+// TODO: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
+uint minOnMs = 250; // 118? 150? 184? 200?
 
 elapsedMillis elapsedMs = 0; // todo: do we care if this overflows?
 
