@@ -1,5 +1,6 @@
 #include <stdlib.h>
 
+// TODO: clean up these includes
 #include <Audio.h>
 #include <FastLED.h>
 #include <SD.h>
@@ -9,6 +10,7 @@
 #include <Wire.h>
 #include <elapsedMillis.h>
 
+// TODO: clean up these defines
 // Use these with the audio adaptor board
 #define SDCARD_CS_PIN 10
 #define SPI_MOSI_PIN 7
@@ -177,7 +179,6 @@ void setupSD() {
 void setupLights() {
   // TODO: clock select pin for FastLED to OUTPUT like we do for the SDCARD?
   FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numLEDs).setCorrection(TypicalSMD5050);
-  ;
   FastLED.setBrightness(DEFAULT_BRIGHTNESS); // TODO: read this from the SD card
   FastLED.clear();
   FastLED.show();
@@ -487,14 +488,3 @@ void loop() {
   // a longer sleep is inside the fft available loop
   FastLED.delay(1);
 }
-
-/* TODO
-
-rename leds[] to visualizer[] (and change to HSV) and create a new "leds" variable that has the actual length of the
-strip. then we can spread the visualizer out across the leds, rotate it, or repeat it. all sorts of modifications (maybe
-based off the "sparkle" freqs?) maybe visualizer -> leds is where the code to shrink visualizer down to fewer lights
-could happen. if we keep it HSV, we can take the color with the most brightness and then add the secondary colors to it
-somehow.
-
-
- */
