@@ -16,6 +16,7 @@
 #define SPI_MOSI_PIN 7
 #define SPI_SCK_PIN 14
 #define VOLUME_KNOB A2
+#define RED_LED 13
 
 // audio adaptor board
 #define VOLUME_KNOB A2
@@ -30,11 +31,11 @@
 #define LED_CLOCK_PIN 1 // blue // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET APA102
 #define LED_MODE BGR
-#define DEFAULT_BRIGHTNESS 255 // TODO: read from SD (maybe this should be on the volume knob)
-#define FRAMES_PER_SECOND 120
+
+#define DEFAULT_BRIGHTNESS 128 // TODO: read from SD (maybe this should be on the volume knob)
 
 #define LED_MODE_STRETCH 0
-#define LED_MODE_REPEAT 1 // TODO: this isn't working
+#define LED_MODE_REPEAT 1
 
 int led_mode = LED_MODE_REPEAT; // TODO: read from SD card
 
@@ -67,16 +68,16 @@ CRGB leds[numLEDs];                      // outputs repeats across this
 // we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here
 // since we have control over brightness)
 int numOn = 0;
-int maxOn = numOutputs * 3 / 4;
+const int maxOn = numOutputs * 3 / 4;
 
 // how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
-float activateDifference = 0.98;
+const float activateDifference = 0.98;
 // simple % decrease
-float decayMax = 0.98;
-float minMaxLevel = 0.15 / activateDifference;
+const float decayMax = 0.98;
+const float minMaxLevel = 0.15 / activateDifference;
 
-float scale_neighbor_max = 0.85;  // TODO: was .666      // how much of the neighbor's max to consider when deciding when to turn on
-float scale_neighbor_brightness = 1.1; // how much of the neighbor's max to consider when deciding how bright to be
+const float scale_neighbor_max = 0.80;  // TODO: was .666      // how much of the neighbor's max to consider when deciding when to turn on
+const float scale_neighbor_brightness = 1.1; // how much of the neighbor's max to consider when deciding how bright to be
 
 // arrays to keep track of the volume for each frequency band
 // TODO: eventually track numOutputs *3 or something like that and then have the color shift to follow the loudest of
@@ -141,9 +142,6 @@ void setupFFTBins() {
 
   e = FindE(numFreqBands, minBin, maxBin); // Find calculated E value
 
-  while (!Serial && (millis() <= 6000))
-    ; // Wait for Serial interface
-
   if (e) {                           // If a value was returned continue
     Serial.printf("E = %4.4f\n", e); // Print calculated E value
     Serial.printf("  i  low high\n");
@@ -173,13 +171,18 @@ void setupSD() {
 
   SPI.begin(); // should this be here?
 
-  // read values from the SD card
+  // read values from the SD card using IniFile
 }
 
 void setupLights() {
   // TODO: clock select pin for FastLED to OUTPUT like we do for the SDCARD?
   FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numLEDs).setCorrection(TypicalSMD5050);
+
+  // TODO: what should this be set to?
+  FastLED.setMaxPowerInVoltsAndMilliamps(4.7, 500);
+
   FastLED.setBrightness(DEFAULT_BRIGHTNESS); // TODO: read this from the SD card
+
   FastLED.clear();
   FastLED.show();
 }
@@ -288,23 +291,29 @@ void updateFrequencyColors() {
       // the output should be off
       if (elapsedMs < turnOffMsArray[i]) {
         // the output has not been on for long enough to prevent flicker
-        // leave it on but reduce brightness at the same rate we reduce maxLevel (TODO: tune this)
+        // leave it on but reduce brightness at twice-ish the rate we reduce maxLevel (TODO: tune this)
         // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
         // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
         // using "video" scaling, meaning: never fading to full black
         // frequencyColors[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
 
-        // we were using video scaling to fade, but HSV doesn't have that.
+        // we were using video scaling to fade, but CHSV doesn't have a fadeLightBy method. TODO: try again
+        frequencyColors[i].value *= decayMax;
         frequencyColors[i].value *= decayMax;
 
         // TODO: tune this minimum
+        /*
         if (frequencyColors[i].value < 25) {
           frequencyColors[i].value = 25;
         }
+        */
       } else {
         // the output has been on for at least minOnMs and is quiet now
         // if it is on, turn it off
-        if (frequencyColors[i].value) {
+        // TODO: tune this. instead of turning off, dim quickly
+        if (frequencyColors[i].value > 16) {
+          frequencyColors[i].value -= 16;
+        } else {
           frequencyColors[i].value = 0;
           numOn -= 1;
         }
@@ -350,7 +359,7 @@ void updateFrequencyColors() {
 
         // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
         // HSV makes it easy to cycle through the rainbow
-        // TODO: color from a pallete instead?
+        // TODO: color from a pallet instead? drop saturation?
         frequencyColors[i] = CHSV(color_hue, 255, color_value);
 
         // make sure we stay on for a minimum amount of time
@@ -373,7 +382,8 @@ void updateFrequencyColors() {
     if (frequencyColors[i].value) {
       // Serial.print(leds[i].getLuma() / 255.0);
       // Serial.print(currentLevel[i]);
-      Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
+      // Serial.print(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness));
+      Serial.print(frequencyColors[i].value / 255.0, 2);
     } else {
       Serial.print("    ");
     }
@@ -442,9 +452,17 @@ void mapOutputsToSpreadOutputs() {
 void mapSpreadOutputsToLEDs() {
   // TODO: this is pretty similar to mapFrequencyColorsToOutputs, but I think a generic function would actually be
   // harder to follow
+
+  // TODO: shift this slowly based on time so the rainbow rotates
+  static int shift = 0;
+
+  CHSV new_color;
+
   for (int i = 0; i < numLEDs; i++) {
+    int shifted_i = (shift / 16 + i) % numLEDs;
+
     if (numSpreadOutputs == numLEDs) {
-      leds[i] = outputsStretched[i];
+      new_color = outputsStretched[shifted_i];
     } else {
       // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs >
       // numFreqBands, but if not it skips some numLEDs should always be >= numOutputs. if its less, we should do the
@@ -453,15 +471,19 @@ void mapSpreadOutputsToLEDs() {
       if (led_mode == LED_MODE_STRETCH) {
         // spread the frequency bands out; multiple LEDs for one frequency
         // this probably be used since the outputs are already spread
-        leds[i] = outputsStretched[map(i, 0, numLEDs, 0, numSpreadOutputs)];
+        new_color = outputsStretched[map(shifted_i, 0, numLEDs, 0, numSpreadOutputs)];
       } else {
         // simple repeat of the pattern
-        leds[i] = outputsStretched[i % numSpreadOutputs];
+        new_color = outputsStretched[shifted_i % numSpreadOutputs];
         // TODO: rotate with memmove8?
         // TODO: light up multiple lights for each output, too?
       }
     }
+
+    leds[i] = new_color;
   }
+
+  shift++;
 }
 
 void loop() {
@@ -473,6 +495,7 @@ void loop() {
     updateFrequencyColors();
 
     // I'm sure this could be a lot more efficient
+    // TODO: spread it around so that only 75% of the visualizer is shown. the other 25% will be on other hats
     mapFrequencyColorsToOutputs();
     mapOutputsToSpreadOutputs();
     mapSpreadOutputsToLEDs();
