@@ -481,6 +481,14 @@ void mapSpreadOutputsToLEDs() {
     }
 
     leds[i] = new_color;
+    /*
+    if (new_color.value == 0) {
+      // fade instead of jumping to black
+      leds[i].fadeToBlackBy(90);
+    } else {
+      leds[i] = new_color;
+    }
+    */
   }
 
   shift++;
