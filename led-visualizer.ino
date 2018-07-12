@@ -70,6 +70,9 @@ CRGB leds[numLEDs];                      // outputs repeats across this
 int numOn = 0;
 const int maxOn = numOutputs * 3 / 4;
 
+// slide the leds over 1 every X frames
+const int frames_per_shift = 16;
+
 // how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
 const float activateDifference = 0.98;
 // simple % decrease
@@ -459,7 +462,7 @@ void mapSpreadOutputsToLEDs() {
   CHSV new_color;
 
   for (int i = 0; i < numLEDs; i++) {
-    int shifted_i = (shift / 16 + i) % numLEDs;
+    int shifted_i = (shift / frames_per_shift + i) % numLEDs;
 
     if (numSpreadOutputs == numLEDs) {
       new_color = outputsStretched[shifted_i];
