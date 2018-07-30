@@ -178,7 +178,7 @@ void setupLights() {
   FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numLEDs).setCorrection(TypicalSMD5050);
 
   // TODO: what should this be set to?
-  FastLED.setMaxPowerInVoltsAndMilliamps(4.7, 500);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5.1, 450);
 
   FastLED.setBrightness(DEFAULT_BRIGHTNESS); // TODO: read this from the SD card
 
@@ -370,7 +370,7 @@ void updateFrequencyColors() {
 
         // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
         // TODO: s-curve? i think FastLED actually does a curve for us
-        // TODO: what should the min be?
+        // TODO: what should the min be? should we limit how fast it moves around by including frequencyColors[i].value here?
         int color_value = constrain(int(currentLevel[i] / local_max * 255), 25, 255);
 
         // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
