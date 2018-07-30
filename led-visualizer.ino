@@ -1,6 +1,9 @@
+#define DEBUG
+//#define DEBUG_SERIAL_WAIT
+#include "bs_debug.h"
+
 #include <stdlib.h>
 
-// TODO: clean up these includes
 #include <Audio.h>
 #include <FastLED.h>
 #include <SD.h>
@@ -10,34 +13,18 @@
 #include <Wire.h>
 #include <elapsedMillis.h>
 
-// TODO: clean up these defines
-// Use these with the audio adaptor board
+#define VOLUME_KNOB A2
+#define LED_CLOCK_PIN 0  // yellow wire on my dotstars
+#define LED_DATA_PIN 1  // green wire on my dotstars
 #define SDCARD_CS_PIN 10
-#define SPI_MOSI_PIN 7
-#define SPI_SCK_PIN 14
-#define VOLUME_KNOB A2
+#define SPI_MOSI_PIN 7  // alt pin for use with audio board
 #define RED_LED 13
+#define SPI_SCK_PIN 14  // alt pin for use with audio board
 
-// audio adaptor board
-#define VOLUME_KNOB A2
-// select device
-#define AUDIO_CS_PIN 10
-// master out, slave in
-#define ALT_MOSI_PIN 7
-// clock
-#define ALT_SCK_PIN 14
-
-#define LED_DATA_PIN 0  // green // TODO: what pin. i want to share with the SD card
-#define LED_CLOCK_PIN 1 // blue // TODO: what pin. i want to share with the SD card
 #define LED_CHIPSET APA102
 #define LED_MODE BGR
 
-#define DEFAULT_BRIGHTNESS 128 // TODO: read from SD (maybe this should be on the volume knob)
-
-#define LED_MODE_STRETCH 0
-#define LED_MODE_REPEAT 1
-
-int led_mode = LED_MODE_REPEAT; // TODO: read from SD card
+#define DEFAULT_BRIGHTNESS 52 // TODO: read from SD (maybe this should be on the volume knob)
 
 AudioInputI2S i2s1;  // xy=139,91
 AudioOutputI2S i2s2; // xy=392,32
@@ -47,31 +34,36 @@ AudioConnection patchCord2(i2s1, 0, fft1024, 0);
 AudioControlSGTL5000 audioShield; // xy=366,225
 
 // each frequencyBin = ~43Hz
-int minBin = 1;   // skip 0-43Hz. it's too noisy
-int maxBin = 373; // skip over 16kHz
+const int minBin = 1;   // skip 0-43Hz. it's too noisy
+const int maxBin = 373; // skip over 16kHz
 
 // this looks best when they are even multiples of each other, but it should work if they aren't
-const int numFreqBands = 16; // TODO: have this be the max and have SD card override
-const int numOutputs = 16; // TODO: have this be the max and have SD card override
+const int numFreqBands = 16;
+const int numOutputs = 16;
 
-const int ledsPerSpreadOutput = 2;
+const int ledsPerSpreadOutput = 1;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
 
-const int numLEDs = 60; // TODO: have this be the max and have SD card override
+const int numLEDs = 90;  // we had 150, but we need more power
 
 int freqBands[numFreqBands];
 CHSV frequencyColors[numFreqBands];
-CHSV outputs[numOutputs]; // frequencyColors are stretched/squished to fit this (squishing being what you probably want)
-CHSV outputsStretched[numSpreadOutputs]; // outputs are stretched to fit this
-CRGB leds[numLEDs];                      // outputs repeats across this
 
-// we don't want all the lights to be on at once (TODO: at least, this was true with the EL. might be different here
-// since we have control over brightness)
+// frequencyColors are stretched/squished to fit this (squishing being what you probably want)
+CHSV outputs[numOutputs];
+
+// outputs are stretched to fit this
+CHSV outputsStretched[numSpreadOutputs];
+
+// outputs repeats across this
+CRGB leds[numLEDs];
+
+// we don't want all the lights to be on at once
 int numOn = 0;
-const int maxOn = numOutputs * 3 / 4;
+const int maxOn = numOutputs * 7 / 8;
 
 // slide the leds over 1 every X frames
-const int frames_per_shift = 16;
+const int frames_per_shift = 60;  // 60 frames * 20 ms/frame = 1200ms
 
 // how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
 const float activateDifference = 0.98;
@@ -79,27 +71,28 @@ const float activateDifference = 0.98;
 const float decayMax = 0.98;
 const float minMaxLevel = 0.15 / activateDifference;
 
-const float scale_neighbor_max = 0.80;  // TODO: was .666      // how much of the neighbor's max to consider when deciding when to turn on
-const float scale_neighbor_brightness = 1.1; // how much of the neighbor's max to consider when deciding how bright to be
+const float scale_neighbor_max = 0.90;  // TODO: was .666, then .8      // how much of the neighbor's max to consider when deciding when to turn on
+
+// how much of the neighbor's max to consider when deciding how bright to be
+const float scale_neighbor_brightness = 1.1;
 
 // arrays to keep track of the volume for each frequency band
-// TODO: eventually track numOutputs *3 or something like that and then have the color shift to follow the loudest of
-// the 3
 float maxLevel[numFreqBands];
 float currentLevel[numFreqBands];
 
 // going through the levels loudest to quietest makes it so we can ensure the loudest get turned on ASAP
 int sortedLevelIndex[numFreqBands];
 
-// keep track of when to turn lights off so that they don't flicker off if the sound drops
+// keep track of when to turn lights off so they don't flicker
 unsigned long turnOffMsArray[numFreqBands];
+
+// used to keep track of framerate
 unsigned long lastUpdate = 0;
 
-// keep the lights from blinking too fast. this is the shortest amount of time to leave an output on
-// TODO: set this based on some sort of bpm detection? read from the SD card? have a button to switch between common settings?
-uint minOnMs = 250; // 118? 150? 184? 200?
+// the shortest amount of time to leave an output on
+const unsigned int minOnMs = 333; // 118? 150? 184? 200? 250?
 
-elapsedMillis elapsedMs = 0; // todo: do we care if this overflows?
+elapsedMillis elapsedMs = 0;
 
 /* sort the levels normalized against their max
  *
@@ -163,8 +156,9 @@ void setupFFTBins() {
       count++;
     }
   } else {
-    Serial.println("Error\n"); // Error, something happened
-    // TODO: what should we do here?
+    Serial.println("Error calculating E"); // Error, something happened
+    while (1)
+      ;
   }
 }
 
@@ -220,7 +214,7 @@ void setupAudio() {
 }
 
 void setup() {
-  Serial.begin(115200); // todo: tune this
+  debug_serial(115200, 2000);
 
   Serial.println("Setting up...");
 
@@ -407,7 +401,6 @@ void mapFrequencyColorsToOutputs() {
     // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs >
     // numFreqBands, but if not it skips some
     if (numOutputs == numFreqBands) {
-      // TODO: is there a more efficient way to do this?
       outputs[i] = frequencyColors[i];
     } else if (numOutputs > numFreqBands) {
       // spread the frequency bands out; multiple LEDs for one frequency
@@ -424,13 +417,12 @@ void mapFrequencyColorsToOutputs() {
       int topFreqId = map(i + 1, 0, numOutputs, 0, numFreqBands);
       for (int f = bottomFreqId + 1; f < topFreqId; f++) {
         if (!frequencyColors[f].value) {
-          // TODO: dim it some to represent neighbor being off
+          // TODO: dim it some to represent neighbor being off?
           continue;
         }
 
         if (!outputs[i].value) {
           // output is off, simply set the color as is
-          // TODO: dim it some to represent neighbor being off
           outputs[i] = frequencyColors[f];
         } else {
           // output has multiple frequencies to show
@@ -445,7 +437,6 @@ void mapFrequencyColorsToOutputs() {
   }
 }
 
-// TODO: i don't love this naming
 void mapOutputsToSpreadOutputs() {
   for (int i = 0; i < numSpreadOutputs; i++) {
     outputsStretched[i] = outputs[map(i, 0, numSpreadOutputs, 0, numOutputs)];
@@ -453,11 +444,8 @@ void mapOutputsToSpreadOutputs() {
 }
 
 void mapSpreadOutputsToLEDs() {
-  // TODO: this is pretty similar to mapFrequencyColorsToOutputs, but I think a generic function would actually be
-  // harder to follow
-
-  // TODO: shift this slowly based on time so the rainbow rotates
-  static int shift = 0;
+  // shift increments each frame and is used to slowly modify the pattern
+  static unsigned int shift = 0;
 
   CHSV new_color;
 
@@ -467,19 +455,14 @@ void mapSpreadOutputsToLEDs() {
     if (numSpreadOutputs == numLEDs) {
       new_color = outputsStretched[shifted_i];
     } else {
-      // numFreqBands can be bigger or smaller than numOutputs. a simple map like this works fine if numOutputs >
-      // numFreqBands, but if not it skips some numLEDs should always be >= numOutputs. if its less, we should do the
-      // scaling with outputs instead
-      // if (numLEDs > numOutputs) {
-      if (led_mode == LED_MODE_STRETCH) {
-        // spread the frequency bands out; multiple LEDs for one frequency
-        // this probably be used since the outputs are already spread
-        new_color = outputsStretched[map(shifted_i, 0, numLEDs, 0, numSpreadOutputs)];
-      } else {
+      // numFreqBands can be bigger or smaller than numOutputs
+      // TODO: test this with large and small values of numSpreadOutputs vs numLEDs
+      if (numSpreadOutputs < numLEDs) {
         // simple repeat of the pattern
         new_color = outputsStretched[shifted_i % numSpreadOutputs];
-        // TODO: rotate with memmove8?
-        // TODO: light up multiple lights for each output, too?
+      } else {
+        // pattern is larger than numLEDs
+        new_color = outputsStretched[shifted_i % numLEDs];
       }
     }
 
@@ -498,15 +481,10 @@ void mapSpreadOutputsToLEDs() {
 }
 
 void loop() {
-  // TODO: determine the note being played?
-  // TODO: determine the tempo?
-  // TODO: find the sum as well as the bins at least 10% as loud as the loudest bin IDs for extra details?
-
   if (fft1024.available()) {
     updateFrequencyColors();
 
     // I'm sure this could be a lot more efficient
-    // TODO: spread it around so that only 75% of the visualizer is shown. the other 25% will be on other hats
     mapFrequencyColorsToOutputs();
     mapOutputsToSpreadOutputs();
     mapSpreadOutputsToLEDs();
