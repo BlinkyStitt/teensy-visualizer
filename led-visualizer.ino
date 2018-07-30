@@ -66,13 +66,15 @@ const int maxOn = numOutputs * 7 / 8;
 const int frames_per_shift = 60;  // 60 frames * 20 ms/frame = 1200ms
 
 // how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
-const float activateDifference = 0.98;
+const float activate_difference = 0.98;
 // simple % decrease
 const float decayMax = 0.98;
-const float minMaxLevel = 0.15 / activateDifference;
+const float minMaxLevel = 0.15 / activate_difference;
 
-const float scale_neighbor_max = 0.90;  // TODO: was .666, then .8      // how much of the neighbor's max to consider when deciding when to turn on
-
+// how much of the neighbor's max to consider when deciding when to turn on
+const float scale_neighbor_max = 0.90;  // TODO: was .666, then .8
+// how much of all the other bin's max to consider when deciding when to turn on
+const float scale_overall_max = 0.333;
 // how much of the neighbor's max to consider when deciding how bright to be
 const float scale_neighbor_brightness = 1.1;
 
@@ -238,7 +240,7 @@ void setup() {
 }
 
 // we could/should pass fft and level as args
-void updateLevelsFromFFT() {
+float updateLevelsFromFFT() {
   // https://forum.pjrc.com/threads/32677-Is-there-a-logarithmic-function-for-FFT-bin-selection-for-any-given-of-bands
 
   // read the FFT frequencies into numOutputs levels
@@ -246,16 +248,27 @@ void updateLevelsFromFFT() {
   // is linear, so for the higher octaves, read
   // many FFT bins together.
 
+  float overall_max = 0;
+
   for (int i = 0; i < numFreqBands - 1; i++) {
     currentLevel[i] = fft1024.read(freqBands[i], freqBands[i + 1] - 1);
+
+    if (currentLevel[i] > overall_max) {
+      overall_max = currentLevel[i];
+    }
   }
 
   // the last level always goes to maxBin
   currentLevel[numFreqBands - 1] = fft1024.read(freqBands[numFreqBands - 1], maxBin);
+
+  return overall_max;
 }
 
-float getLocalMaxLevel(int i, float scale_neighbor) {
+float getLocalMaxLevel(int i, float scale_neighbor, float overall_max, float scale_overall_max) {
   float localMaxLevel = maxLevel[i];
+
+  // don't let the max ever go to zero
+  localMaxLevel = max(localMaxLevel, minMaxLevel);
 
   if (i != 0) {
     // check previous level if we aren't the first level
@@ -266,13 +279,16 @@ float getLocalMaxLevel(int i, float scale_neighbor) {
     // check the next level if we aren't the last level
     localMaxLevel = max(localMaxLevel, maxLevel[i + 1] * scale_neighbor);
   }
+  
+  // check all the other bins, too
+  localMaxLevel = max(localMaxLevel, overall_max * scale_overall_max);
 
   return localMaxLevel;
 }
 
 void updateFrequencyColors() {
   // read FFT frequency data into a bunch of levels. assign each level a color and a brightness
-  updateLevelsFromFFT();
+  float overall_max = updateLevelsFromFFT();
 
   // turn off any quiet levels. we do this before turning any lights on so that our loudest frequencies are most
   // responsive
@@ -283,8 +299,10 @@ void updateFrequencyColors() {
       maxLevel[i] = currentLevel[i];
     }
 
+    float local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
+
     // turn off if current level is less than the activation threshold
-    if (currentLevel[i] < getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
+    if (currentLevel[i] < local_max * activate_difference) {
       // the output should be off
       if (elapsedMs < turnOffMsArray[i]) {
         // the output has not been on for long enough to prevent flicker
@@ -326,8 +344,10 @@ void updateFrequencyColors() {
   for (int j = 0; j < numFreqBands; j++) {
     int i = sortedLevelIndex[j];
 
+    float local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
+
     // check if current is close to the last max (also check the neighbor maxLevels)
-    if (currentLevel[i] >= getLocalMaxLevel(i, scale_neighbor_max) * activateDifference) {
+    if (currentLevel[i] >= local_max * activate_difference) {
       // this light should be on!
       if (numOn >= maxOn) {
         // except we already have too many lights on! don't do anything since this light is already off
@@ -351,8 +371,7 @@ void updateFrequencyColors() {
         // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
         // TODO: s-curve? i think FastLED actually does a curve for us
         // TODO: what should the min be?
-        int color_value =
-            constrain(int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_brightness) * 255), 25, 255);
+        int color_value = constrain(int(currentLevel[i] / local_max * 255), 25, 255);
 
         // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
         // HSV makes it easy to cycle through the rainbow
@@ -365,8 +384,9 @@ void updateFrequencyColors() {
       }
     }
 
-    // decay maxLevel (but not less than minMaxLevel)
-    maxLevel[i] = (decayMax * maxLevel[i]) + ((1 - decayMax) * minMaxLevel);
+    // decay maxLevel
+    // TODO: tune this. not sure a simple % decay is a good idea. might be better to subtract a fixed amount instead
+    maxLevel[i] = maxLevel[i] * decayMax;
   }
 
   // debug print
@@ -468,6 +488,7 @@ void mapSpreadOutputsToLEDs() {
 
     leds[i] = new_color;
     /*
+    // TODO: re-enable this?
     if (new_color.value == 0) {
       // fade instead of jumping to black
       leds[i].fadeToBlackBy(90);
