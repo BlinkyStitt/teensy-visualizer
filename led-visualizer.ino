@@ -37,9 +37,9 @@ AudioControlSGTL5000 audioShield; // xy=366,225
 const int minBin = 1;   // skip 0-43Hz. it's too noisy
 const int maxBin = 373; // skip over 16kHz
 
-// this looks best when they are even multiples of each other, but it should work if they aren't
-const int numFreqBands = 16;
-const int numOutputs = 16;
+// this looks best when they are even multiples of each other and numLEDs, but it should work if they aren't
+const int numFreqBands = 12;
+const int numOutputs = 12;
 
 const int ledsPerSpreadOutput = 1;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
@@ -197,15 +197,15 @@ void setupAudio() {
   audioShield.volume(0.5);
   audioShield.micGain(60); // was 63, then 40  // 0-63 // TODO: tune this
 
-  audioShield.audioPreProcessorEnable(); // todo: pre or post?
+  //audioShield.audioPreProcessorEnable(); // todo: pre or post?
 
   // bass, mid_bass, midrange, mid_treble, treble
   // TODO: tune this. maybe read from SD card
-  audioShield.eqSelect(GRAPHIC_EQUALIZER);
+  //audioShield.eqSelect(GRAPHIC_EQUALIZER);
   // audioShield.eqBands(-0.80, -0.75, -0.50, 0.50, 0.80);  // the great northern
   // audioShield.eqBands(-0.5, -.2, 0, .2, .5);  // todo: tune this
   // audioShield.eqBands(-0.80, -0.10, 0, 0.10, 0.33);  // todo: tune this
-  audioShield.eqBands(0.0, 0.0, 0.0, 0.1, 0.33); // todo: tune this
+  //audioShield.eqBands(0.0, 0.0, 0.0, 0.1, 0.33); // todo: tune this
 
   audioShield.unmuteHeadphone(); // for debugging
 
