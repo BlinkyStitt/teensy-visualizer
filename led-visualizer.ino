@@ -76,9 +76,9 @@ const float decayMax = 0.98;
 const float minMaxLevel = 0.15 / activate_difference;
 
 // how much of the neighbor's max to consider when deciding when to turn on
-const float scale_neighbor_max = 0.90;
+const float scale_neighbor_max = 0.9;
 // how much of all the other bin's max to consider when deciding when to turn on
-const float scale_overall_max = 0.5;
+const float scale_overall_max = 0.4;
 // how much of the neighbor's max to consider when deciding how bright to be
 const float scale_neighbor_brightness = 1.1;
 
