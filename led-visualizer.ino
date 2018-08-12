@@ -66,7 +66,7 @@ const int maxOn = numOutputs * 3 / 4;
 int numOn = 0;
 
 // slide the leds over 1 every X frames
-const int frames_per_shift = 107;  // 60 frames * 20 ms/frame = 1200ms
+const int frames_per_shift = 174;  // 174 frames * 11.5 ms/frame = 2001ms
 
 // how close a sound has to be to the loudest sound in order to activate
 const float activate_difference = 0.98;
