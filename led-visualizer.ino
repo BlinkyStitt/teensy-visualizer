@@ -37,8 +37,8 @@ const int minBin = 1;   // skip 0-43Hz. it's too noisy
 const int maxBin = 373; // skip over 16kHz
 
 // this looks best when they are even multiples of each other and numLEDs, but it should work if they aren't
-const int numFreqBands = 12;
-const int numOutputs = 12;
+const int numFreqBands = 11;
+const int numOutputs = 11;
 
 const int ledsPerSpreadOutput = 1;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
@@ -62,11 +62,11 @@ CHSV outputsStretched[numSpreadOutputs];
 CRGB leds[numLEDs];
 
 // we don't want all the lights to be on at once
-const int maxOn = numOutputs * 5 / 8;
+const int maxOn = numOutputs * 3 / 4;
 int numOn = 0;
 
 // slide the leds over 1 every X frames
-const int frames_per_shift = 60;  // 60 frames * 20 ms/frame = 1200ms
+const int frames_per_shift = 107;  // 60 frames * 20 ms/frame = 1200ms
 
 // how close a sound has to be to the loudest sound in order to activate
 const float activate_difference = 0.98;
@@ -98,7 +98,7 @@ unsigned long lastUpdate = 0;
 
 // the shortest amount of time to leave an output on
 // TODO: tune this!
-const unsigned int minOnMs = 250; // 118? 150? 184? 200? 250?
+const unsigned int minOnMs = 337; // 118? 150? 184? 200? 250?
 
 /* sort the levels normalized against their max
  *
@@ -319,13 +319,11 @@ void updateFrequencyColors() {
       // the output should be off
       if (millis() < turnOffMsArray[i]) {
         // the output has not been on for long enough to prevent flicker
-        // leave it on but reduce brightness at 4x the rate we reduce maxLevel (TODO: tune this)
+        // leave it on but reduce brightness at 2x the rate we reduce maxLevel
         // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
         // we were using "video" scaling to fade (meaning: never fading to full black), but CHSV doesn't have a fadeLightBy method
         // frequencyColors[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
 
-        frequencyColors[i].value *= decayMax;
-        frequencyColors[i].value *= decayMax;
         frequencyColors[i].value *= decayMax;
         frequencyColors[i].value *= decayMax;
 
@@ -338,8 +336,8 @@ void updateFrequencyColors() {
         // the output has been on for at least minOnMs and is quiet now
         // if it is on, dim it quickly to off
         // TODO: tune this.
-        if (frequencyColors[i].value > 25) {
-          frequencyColors[i].value -= 25;
+        if (frequencyColors[i].value > 16) {
+          frequencyColors[i].value -= 16;
         } else {
           frequencyColors[i].value = 0;
           numOn -= 1;
