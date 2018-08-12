@@ -11,7 +11,6 @@
 #include <SerialFlash.h>
 #include <SoftwareSerial.h>
 #include <Wire.h>
-#include <elapsedMillis.h>
 
 #define VOLUME_KNOB A2
 #define LED_CLOCK_PIN 0  // yellow wire on my dotstars
@@ -24,7 +23,7 @@
 #define LED_CHIPSET APA102
 #define LED_MODE BGR
 
-#define DEFAULT_BRIGHTNESS 52 // TODO: read from SD (maybe this should be on the volume knob)
+#define DEFAULT_BRIGHTNESS 52 // TODO: read from SD
 
 AudioInputI2S i2s1;  // xy=139,91
 AudioOutputI2S i2s2; // xy=392,32
@@ -44,7 +43,11 @@ const int numOutputs = 12;
 const int ledsPerSpreadOutput = 1;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
 
-const int numLEDs = 90;  // we had 150, but we need more power
+// 30 leds per meter
+// 3 meters (90) works without a level shifter
+// 4 meters (120) works with a level shifter
+// we had 5 meters (150), but we need more power
+const int numLEDs = 120;
 
 int freqBands[numFreqBands];
 CHSV frequencyColors[numFreqBands];
@@ -59,27 +62,29 @@ CHSV outputsStretched[numSpreadOutputs];
 CRGB leds[numLEDs];
 
 // we don't want all the lights to be on at once
+const int maxOn = numOutputs * 5 / 8;
 int numOn = 0;
-const int maxOn = numOutputs * 7 / 8;
 
 // slide the leds over 1 every X frames
 const int frames_per_shift = 60;  // 60 frames * 20 ms/frame = 1200ms
 
-// how close a sound has to be to the loudest sound in order to activate  // TODO: tune this
+// how close a sound has to be to the loudest sound in order to activate
 const float activate_difference = 0.98;
 // simple % decrease
 const float decayMax = 0.98;
+// set a floor so that decayMax doesn't go too low
 const float minMaxLevel = 0.15 / activate_difference;
 
 // how much of the neighbor's max to consider when deciding when to turn on
-const float scale_neighbor_max = 0.90;  // TODO: was .666, then .8
+const float scale_neighbor_max = 0.90;
 // how much of all the other bin's max to consider when deciding when to turn on
-const float scale_overall_max = 0.333;
+const float scale_overall_max = 0.5;
 // how much of the neighbor's max to consider when deciding how bright to be
 const float scale_neighbor_brightness = 1.1;
 
-// arrays to keep track of the volume for each frequency band
+// keep track of the max volume for each frequency band (slowly decays)
 float maxLevel[numFreqBands];
+// keep track of the current levels. this is a sum of multiple frequency bins.
 float currentLevel[numFreqBands];
 
 // going through the levels loudest to quietest makes it so we can ensure the loudest get turned on ASAP
@@ -88,13 +93,12 @@ int sortedLevelIndex[numFreqBands];
 // keep track of when to turn lights off so they don't flicker
 unsigned long turnOffMsArray[numFreqBands];
 
-// used to keep track of framerate
+// used to keep track of framerate // TODO: remove this if debug mode is disabled
 unsigned long lastUpdate = 0;
 
 // the shortest amount of time to leave an output on
-const unsigned int minOnMs = 333; // 118? 150? 184? 200? 250?
-
-elapsedMillis elapsedMs = 0;
+// TODO: tune this!
+const unsigned int minOnMs = 250; // 118? 150? 184? 200? 250?
 
 /* sort the levels normalized against their max
  *
@@ -178,12 +182,14 @@ void setupLights() {
   FastLED.addLeds<LED_CHIPSET, LED_DATA_PIN, LED_CLOCK_PIN, LED_MODE>(leds, numLEDs).setCorrection(TypicalSMD5050);
 
   // TODO: what should this be set to?
-  FastLED.setMaxPowerInVoltsAndMilliamps(5.1, 450);
+  FastLED.setMaxPowerInVoltsAndMilliamps(5, 450);
 
   FastLED.setBrightness(DEFAULT_BRIGHTNESS); // TODO: read this from the SD card
 
   FastLED.clear();
   FastLED.show();
+
+  // TODO: turn off onboard LED
 }
 
 void setupAudio() {
@@ -267,21 +273,20 @@ float updateLevelsFromFFT() {
 float getLocalMaxLevel(int i, float scale_neighbor, float overall_max, float scale_overall_max) {
   float localMaxLevel = maxLevel[i];
 
-  // don't let the max ever go to zero
-  localMaxLevel = max(localMaxLevel, minMaxLevel);
-
+  // check previous level if we aren't the first level
   if (i != 0) {
-    // check previous level if we aren't the first level
     localMaxLevel = max(localMaxLevel, maxLevel[i - 1] * scale_neighbor);
   }
 
+  // check the next level if we aren't the last level
   if (i != numOutputs) {
-    // check the next level if we aren't the last level
     localMaxLevel = max(localMaxLevel, maxLevel[i + 1] * scale_neighbor);
   }
   
   // check all the other bins, too
-  localMaxLevel = max(localMaxLevel, overall_max * scale_overall_max);
+  if (overall_max and scale_overall_max) {
+    localMaxLevel = max(localMaxLevel, overall_max * scale_overall_max);
+  }
 
   return localMaxLevel;
 }
@@ -289,6 +294,8 @@ float getLocalMaxLevel(int i, float scale_neighbor, float overall_max, float sca
 void updateFrequencyColors() {
   // read FFT frequency data into a bunch of levels. assign each level a color and a brightness
   float overall_max = updateLevelsFromFFT();
+
+  float local_max = 0;
 
   // turn off any quiet levels. we do this before turning any lights on so that our loudest frequencies are most
   // responsive
@@ -299,35 +306,40 @@ void updateFrequencyColors() {
       maxLevel[i] = currentLevel[i];
     }
 
-    float local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
+    if (! frequencyColors[i].value) {
+      // this light is already off
+      continue;
+    }
+
+    local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
 
     // turn off if current level is less than the activation threshold
+    // TODO: i'm not sure i like this method anymore. its too arbitrary
     if (currentLevel[i] < local_max * activate_difference) {
       // the output should be off
-      if (elapsedMs < turnOffMsArray[i]) {
+      if (millis() < turnOffMsArray[i]) {
         // the output has not been on for long enough to prevent flicker
-        // leave it on but reduce brightness at twice-ish the rate we reduce maxLevel (TODO: tune this)
+        // leave it on but reduce brightness at 4x the rate we reduce maxLevel (TODO: tune this)
         // TODO: should the brightness be tied to the currentLevel somehow? that might make it too random looking
-        // TODO: probably should be tied to minOnMs so that it fades to minimum brightness before turning off
-        // using "video" scaling, meaning: never fading to full black
+        // we were using "video" scaling to fade (meaning: never fading to full black), but CHSV doesn't have a fadeLightBy method
         // frequencyColors[i].fadeLightBy(int((1.0 - decayMax) * 4.0 * 255));
 
-        // we were using video scaling to fade, but CHSV doesn't have a fadeLightBy method. TODO: try again
+        frequencyColors[i].value *= decayMax;
+        frequencyColors[i].value *= decayMax;
         frequencyColors[i].value *= decayMax;
         frequencyColors[i].value *= decayMax;
 
-        // TODO: tune this minimum
-        /*
-        if (frequencyColors[i].value < 25) {
-          frequencyColors[i].value = 25;
+        // make sure we don't turn off while fading
+        // TODO: tune this minimum?
+        if (frequencyColors[i].value < 1) {
+          frequencyColors[i].value = 1;
         }
-        */
       } else {
         // the output has been on for at least minOnMs and is quiet now
-        // if it is on, turn it off
-        // TODO: tune this. instead of turning off, dim quickly
-        if (frequencyColors[i].value > 16) {
-          frequencyColors[i].value -= 16;
+        // if it is on, dim it quickly to off
+        // TODO: tune this.
+        if (frequencyColors[i].value > 25) {
+          frequencyColors[i].value -= 25;
         } else {
           frequencyColors[i].value = 0;
           numOn -= 1;
@@ -344,7 +356,7 @@ void updateFrequencyColors() {
   for (int j = 0; j < numFreqBands; j++) {
     int i = sortedLevelIndex[j];
 
-    float local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
+    local_max = getLocalMaxLevel(i, scale_neighbor_max, overall_max, scale_overall_max);
 
     // check if current is close to the last max (also check the neighbor maxLevels)
     if (currentLevel[i] >= local_max * activate_difference) {
@@ -371,25 +383,33 @@ void updateFrequencyColors() {
         // look at neighbors and use their max for brightness if they are louder (but don't be less than 10% on!)
         // TODO: s-curve? i think FastLED actually does a curve for us
         // TODO: what should the min be? should we limit how fast it moves around by including frequencyColors[i].value here?
-        int color_value = constrain(int(currentLevel[i] / local_max * 255), 25, 255);
+        // notie how we getLocalMax but exclude the overall volume. we only want that for on/off. if we include it here everything flickers too much
+        int color_value = constrain(int(currentLevel[i] / getLocalMaxLevel(i, scale_neighbor_max, 0, 0) * 255), 25, 255);
 
         // https://github.com/FastLED/FastLED/wiki/FastLED-HSV-Colors#color-map-rainbow-vs-spectrum
         // HSV makes it easy to cycle through the rainbow
-        // TODO: color from a pallet instead? drop saturation?
+        // TODO: color from a pallet instead.
+        // TODO: what saturation?
         frequencyColors[i] = CHSV(color_hue, 255, color_value);
 
         // make sure we stay on for a minimum amount of time
         // if we were already on, extend the time that we stay on
-        turnOffMsArray[i] = elapsedMs + minOnMs;
+        turnOffMsArray[i] = millis() + minOnMs;
       }
     }
 
     // decay maxLevel
     // TODO: tune this. not sure a simple % decay is a good idea. might be better to subtract a fixed amount instead
     maxLevel[i] = maxLevel[i] * decayMax;
+
+    // don't let the max ever go to zero otherwise so that it turns off when its quiet instead of activating at a whisper
+    if (maxLevel[i] < minMaxLevel) {
+      maxLevel[i] = minMaxLevel;
+    }
   }
 
   // debug print
+  // TODO: wrap this in an ifdef DEBUG
   for (int i = 0; i < numFreqBands; i++) {
     Serial.print("| ");
 
@@ -410,9 +430,9 @@ void updateFrequencyColors() {
   Serial.print(" blocks | ");
 
   // finish debug print
-  Serial.print(elapsedMs - lastUpdate);
+  Serial.print(millis() - lastUpdate);
   Serial.println("ms");
-  lastUpdate = elapsedMs;
+  lastUpdate = millis();
   Serial.flush();
 }
 
@@ -506,6 +526,7 @@ void loop() {
     updateFrequencyColors();
 
     // I'm sure this could be a lot more efficient
+    // TODO: get rid of this and just hard code our current repeating code to keep it simpler?
     mapFrequencyColorsToOutputs();
     mapOutputsToSpreadOutputs();
     mapSpreadOutputsToLEDs();
