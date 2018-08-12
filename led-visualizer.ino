@@ -533,7 +533,7 @@ void loop() {
 
     // using FastLED's delay allows for dithering
     // we sleep for a while inside the loop since we know we don't need to process anything for 11 or 12 ms
-    FastLED.delay(10);
+    FastLED.delay(9);
   }
 
   // using FastLED's delay allows for dithering
