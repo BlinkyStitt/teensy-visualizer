@@ -9,7 +9,6 @@
 #include <SD.h>
 #include <SPI.h>
 #include <SerialFlash.h>
-#include <SoftwareSerial.h>
 #include <Wire.h>
 
 #define VOLUME_KNOB A2
@@ -505,15 +504,6 @@ void mapSpreadOutputsToLEDs() {
     }
 
     leds[i] = new_color;
-    /*
-    // TODO: re-enable this?
-    if (new_color.value == 0) {
-      // fade instead of jumping to black
-      leds[i].fadeToBlackBy(90);
-    } else {
-      leds[i] = new_color;
-    }
-    */
   }
 
   shift++;
