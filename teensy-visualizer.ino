@@ -2,6 +2,11 @@
 //#define DEBUG_SERIAL_WAIT
 #include "bs_debug.h"
 
+// select one of these CONTROL_* defines
+// TODO: error if one and only one of these is not set
+#define CONTROL_LED
+//#define CONTROL_EL
+
 #include <stdlib.h>
 
 #include <Audio.h>
@@ -36,9 +41,34 @@ const int minBin = 1;   // skip 0-43Hz. it's too noisy
 const int maxBin = 373; // skip over 16kHz
 
 // this looks best when they are even multiples of each other and numLEDs, but it should work if they aren't
+#ifdef CONTROL_EL
+// TOODO: put this back to 8 and 1
+const int numFreqBands = 8;
+const int numOutputs = 1;
+
+// we don't want all the lights to be on at once
+const int maxOn = 5;
+
+// the shortest amount of time to leave an output on
+// TODO: tune this!
+const unsigned int minOnMs = 184; // 118? 150? 184? 200? 250?
+
+#endif
+
+#ifdef CONTROL_LED
 const int numFreqBands = 11;
 const int numOutputs = 11;
 
+// we don't want all the lights to be on at once
+const int maxOn = numOutputs * 3 / 4;
+
+// the shortest amount of time to leave an output on
+// TODO: tune this!
+const unsigned int minOnMs = 337; // 118? 150? 184? 200? 250?
+
+#endif
+
+// we could put many of these variables under a ifdef CONTROL_EL, but its fine having extra globals around for now
 const int ledsPerSpreadOutput = 1;
 const int numSpreadOutputs = numOutputs * ledsPerSpreadOutput;
 
@@ -60,8 +90,9 @@ CHSV outputsStretched[numSpreadOutputs];
 // outputs repeats across this
 CRGB leds[numLEDs];
 
-// we don't want all the lights to be on at once
-const int maxOn = numOutputs * 3 / 4;
+// TODO: support multiple el sequencers
+unsigned char el_output[1] = {0};
+
 int numOn = 0;
 
 // slide the leds over 1 every X frames
@@ -94,10 +125,6 @@ unsigned long turnOffMsArray[numFreqBands];
 
 // used to keep track of framerate // TODO: remove this if debug mode is disabled
 unsigned long lastUpdate = 0;
-
-// the shortest amount of time to leave an output on
-// TODO: tune this!
-const unsigned int minOnMs = 337; // 118? 150? 184? 200? 250?
 
 /* sort the levels normalized against their max
  *
@@ -215,7 +242,7 @@ void setupAudio() {
   audioShield.unmuteHeadphone(); // for debugging
 
   // setup array for sorting
-  for (int i = 0; i < numOutputs; i++) {
+  for (int i = 0; i < numFreqBands; i++) {
     sortedLevelIndex[i] = i;
   }
 }
@@ -235,7 +262,17 @@ void setup() {
 
   // TODO: read numOutputs from the SD card
 
+#ifdef CONTROL_LED
   setupLights();
+#endif
+
+#ifdef CONTROL_EL
+  // https://www.pjrc.com/teensy/td_uart.html
+  Serial1.begin(115200);  // MASTER_RX=0, MASTER_TX=1
+  // TODO: support multiple serial connections
+  //Serial2.begin(115200);  // MASTER_RX=9, MASTER_TX=10
+  //Serial3.begin(115200);  // MASTER_RX=7, MASTER_TX=8
+#endif
 
   setupAudio();
 
@@ -278,7 +315,7 @@ float getLocalMaxLevel(int i, float scale_neighbor, float overall_max, float sca
   }
 
   // check the next level if we aren't the last level
-  if (i != numOutputs) {
+  if (i != numFreqBands) {
     localMaxLevel = max(localMaxLevel, maxLevel[i + 1] * scale_neighbor);
   }
   
@@ -424,7 +461,9 @@ void updateFrequencyColors() {
   }
   Serial.print("| ");
   Serial.print(AudioMemoryUsageMax());
-  Serial.print(" blocks | ");
+  Serial.print(" blocks | Num On=");
+  Serial.print(numOn);
+  Serial.print(" | ");
 
   // finish debug print
   Serial.print(millis() - lastUpdate);
@@ -509,10 +548,22 @@ void mapSpreadOutputsToLEDs() {
   shift++;
 }
 
+void mapFrequencyColorsToElOutputs() {
+  for (int i = 0; i < numFreqBands; i++) {
+    // TODO: better support multiple sequencers
+    if (frequencyColors[i].value) {
+      bitSet(el_output[i / 8], i % 8);
+    } else {
+      bitClear(el_output[i / 8], i % 8);
+    }
+  }
+}
+
 void loop() {
   if (fft1024.available()) {
     updateFrequencyColors();
 
+#ifdef CONTROL_LED
     // I'm sure this could be a lot more efficient
     // TODO: get rid of this and just hard code our current repeating code to keep it simpler?
     mapFrequencyColorsToOutputs();
@@ -520,6 +571,21 @@ void loop() {
     mapSpreadOutputsToLEDs();
 
     FastLED.show();
+#endif
+
+#ifdef CONTROL_EL
+    mapFrequencyColorsToElOutputs();
+
+    // send the bytes to their devices
+    Serial1.write(el_output[0]);
+    //Serial2.write(el_output[1]);
+    //Serial3.write(el_output[2]);
+
+    // make sure that first byte finished writing
+    Serial1.flush();
+    //Serial2.flush();
+    //Serial3.flush();
+#endif
 
     // using FastLED's delay allows for dithering
     // we sleep for a while inside the loop since we know we don't need to process anything for 11 or 12 ms
