@@ -4,8 +4,8 @@
 
 // select one of these CONTROL_* defines
 // TODO: error if one and only one of these is not set
-#define CONTROL_LED
-//#define CONTROL_EL
+//#define CONTROL_LED
+#define CONTROL_EL
 
 #include <stdlib.h>
 
@@ -266,17 +266,23 @@ void setup() {
   setupLights();
 #endif
 
-#ifdef CONTROL_EL
-  // https://www.pjrc.com/teensy/td_uart.html
-  Serial1.begin(115200);  // MASTER_RX=0, MASTER_TX=1
-  // TODO: support multiple serial connections
-  //Serial2.begin(115200);  // MASTER_RX=9, MASTER_TX=10
-  //Serial3.begin(115200);  // MASTER_RX=7, MASTER_TX=8
-#endif
-
   setupAudio();
 
   setupFFTBins();
+
+#ifdef CONTROL_EL
+  // https://www.pjrc.com/teensy/td_uart.html
+  Serial1.begin(9600);  // RX=0 (yellow), TX=1 (green)
+  // TODO: support multiple serial connections
+  //Serial2.begin(9600);  // RX=9, TX=10
+  //Serial3.begin(9600);  // RX=7, TX=8
+
+  Serial.print("Waiting for Serial1... ");
+  while (!Serial1) {
+    ; // wait for serial port to connect
+  }
+  Serial.println("DONE");
+#endif
 
   Serial.println("Starting...");
 }
@@ -570,6 +576,10 @@ void loop() {
     mapOutputsToSpreadOutputs();
     mapSpreadOutputsToLEDs();
 
+    // using FastLED's delay allows for dithering
+    // we sleep for a while inside the loop since we know we don't need to process anything for 11 or 12 ms
+    FastLED.delay(9);
+
     FastLED.show();
 #endif
 
@@ -581,15 +591,13 @@ void loop() {
     //Serial2.write(el_output[1]);
     //Serial3.write(el_output[2]);
 
-    // make sure that first byte finished writing
+    delay(9);
+
+    // make sure we finished writing
     Serial1.flush();
     //Serial2.flush();
     //Serial3.flush();
 #endif
-
-    // using FastLED's delay allows for dithering
-    // we sleep for a while inside the loop since we know we don't need to process anything for 11 or 12 ms
-    FastLED.delay(9);
   }
 
   // using FastLED's delay allows for dithering
