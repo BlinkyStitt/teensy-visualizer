@@ -4,8 +4,8 @@
 
 // select one of these CONTROL_* defines
 // TODO: error if one and only one of these is not set
-//#define CONTROL_LED
-#define CONTROL_EL
+#define CONTROL_LED
+//#define CONTROL_EL
 
 #include <stdlib.h>
 
