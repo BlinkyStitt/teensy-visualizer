@@ -19,8 +19,12 @@ const int outputPins[NUM_OUTPUTS] = {OUTPUT_A, OUTPUT_B, OUTPUT_C, OUTPUT_D, OUT
 // data from the Teensy maps to the 8 outputs
 unsigned char data = 0;
 
-// TODO: the teensy already has this logic
-unsigned int minOnMs = 100;
+// track the millis() of when we last received a message over serial
+unsigned long lastData = 0;
+
+// the teensy already has logic for keeping the lights from flickering. this is really just a backup
+// TODO: delete this logic entirely? having it just on the teensy side should be fine
+unsigned int minOnMs = 11.5 * 2;
 unsigned long turnOffMsArray[NUM_OUTPUTS];
 
 void setup() {
@@ -34,8 +38,6 @@ void setup() {
 
   Serial.println("Started...");
 }
-
-unsigned long lastData = 0;
 
 void loop() {
   if (mySerial.available()) {
