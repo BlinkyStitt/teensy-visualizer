@@ -1,0 +1,52 @@
+name: Security scan
+
+on:
+  pull_request:
+  push:
+    branches: ["master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan dependencies, configuration, and secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan the checked-out source
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/trivy-results.json"
+          docker run --rm --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" --env HOME=/tmp \
+            --tmpfs /tmp:rw,mode=1777 \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/source,readonly" \
+            "$TRIVY_IMAGE" fs --cache-dir /tmp/trivy-cache \
+            --no-progress --disable-telemetry --skip-version-check --offline-scan \
+            --scanners vuln,misconfig,secret --skip-dirs /source/.git \
+            --format json --exit-code 0 --timeout 8m /source > "$report"
+
+          # Report findings during rollout. Keep secret matches and source lines out of logs.
+          jq -r '
+            [.Results[]?] as $targets |
+            "Scanned targets with results: \($targets | length)",
+            "Dependency vulnerabilities: \([$targets[].Vulnerabilities[]?] | length)",
+            "Configuration findings: \([$targets[].Misconfigurations[]?] | length)",
+            "Possible secrets: \([$targets[].Secrets[]?] | length)",
+            "",
+            ($targets[] | .Vulnerabilities[]? |
+              {advisory: .VulnerabilityID, package: .PkgName, installed: .InstalledVersion,
+               fixed: .FixedVersion, severity: .Severity} | tojson),
+            ($targets[] | .Misconfigurations[]? |
+              {rule: .ID, severity: .Severity, source: .PrimaryURL} | tojson),
+            ($targets[] | .Target as $file | .Secrets[]? |
+              {rule: .RuleID, severity: .Severity, file: $file, line: .StartLine} | tojson)
+          ' "$report" | tee -a "$GITHUB_STEP_SUMMARY"
