@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-ci-security-scan.yml-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     name: Scan dependencies, configuration, and secrets
