@@ -1,0 +1,21 @@
+name: "Cancel closed PR: security-scan.yml"
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+# Share only this validation workflow's PR slot, including merged closes.
+concurrency:
+  group: "pr-ci-security-scan.yml-pull_request-${{ github.event.number || format('unknown-close-{0}', github.run_id) }}"
+  cancel-in-progress: true
+
+jobs:
+  cancel:
+    # The closed event acquires the group; this job never starts a runner.
+    if: ${{ github.event.number && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: 'true'
