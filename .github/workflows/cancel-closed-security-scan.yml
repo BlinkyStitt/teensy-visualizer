@@ -15,7 +15,7 @@ jobs:
   cancel:
     # The closed event acquires the group; this job never starts a runner.
     if: ${{ github.event.number && github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
+    runs-on: ski-kvm-teensy-visualizer
     timeout-minutes: 1
     steps:
       - run: 'true'
